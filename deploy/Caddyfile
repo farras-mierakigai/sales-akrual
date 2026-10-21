@@ -1,0 +1,12 @@
+{$SA_DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 300MB
+	}
+	reverse_proxy app:8766 {
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Masuk — Sales Akrual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#FFFFFF;--bg2:#F6F3FF;--lav:#EDE7FF;--ink:#1E1E1E;--ink2:#5B5B6B;--muted:#8A8A99;--line:#E6E3F0;--line2:#1E1E1E;--orange:#F4561E;--purple:#5E1AF1;--purple-dk:#340E7C;--bad:#C62828;--radius:10px;--shadow:5px 5px 10px rgba(0,0,0,.08)}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:linear-gradient(160deg,var(--lav),#fff 60%);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,sans-serif;font-size:14px;line-height:1.45}
+.box{max-width:380px;margin:12vh auto 0;padding:0 16px}
+.card{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:24px 22px;box-shadow:var(--shadow)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.logo{width:38px;height:38px;border-radius:8px;background:var(--purple-dk);display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px}
+h1{font-size:18px;margin:0;font-weight:800}
+.sub{color:var(--ink2);font-size:12px}
+label{display:block;font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px}
+input{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--ink)}
+button{font:inherit;font-weight:700;width:100%;margin-top:18px;padding:10px 14px;border-radius:6px;border:1px solid var(--orange);background:var(--orange);color:#fff;cursor:pointer;box-shadow:var(--shadow)}
+button:disabled{opacity:.6;cursor:default}
+.err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
+.foot{color:var(--muted);font-size:12px;text-align:center;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="card">
+    <div class="brand"><div class="logo">MKG</div><div><h1>Sales Akrual</h1><div class="sub">Masuk dengan akun tim Mierakigai</div></div></div>
+    <form id="f" autocomplete="on">
+      <label for="u">Nama pengguna</label>
+      <input id="u" name="username" autocomplete="username" autofocus required>
+      <label for="p">Password</label>
+      <input id="p" name="password" type="password" autocomplete="current-password" required>
+      <button id="b" type="submit">Masuk</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+  <div class="foot">Belum punya akun? Minta admin (Farras) membuatkan di tab <b>Data &amp; file → Pengguna</b>.</div>
+</div>
+<script>
+document.getElementById('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const b = document.getElementById('b'), err = document.getElementById('err');
+  b.disabled = true; err.textContent = '';
+  try {
+    const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username: document.getElementById('u').value, password: document.getElementById('p').value})});
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m } catch(_){} throw new Error(m); }
+    location.href = '/';
+  } catch (e2) { err.textContent = e2.message; b.disabled = false; }
+};
+</script>
+</body>
+</html>

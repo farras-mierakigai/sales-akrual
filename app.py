@@ -1,0 +1,578 @@
+"""Sales Akrual — analisa penjualan riil Shopee / TikTok / Tokopedia dari file export.
+
+Jalankan:  python3 app.py   lalu buka  http://127.0.0.1:8766
+"""
+import os
+import io
+import sys
+import shutil
+import glob
+import math
+import threading
+from typing import List, Optional
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, RedirectResponse, Response
+from pydantic import BaseModel
+
+import analysis
+import audit
+import auth
+import hpp as hppmod
+import ads as adsmod
+import parsers
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
+NO_STORE = {"Cache-Control": "no-store, max-age=0"}
+PUBLIC_PATHS = {"/login", "/api/login", "/favicon.ico", "/healthz"}
+
+
+# ---------------------------------------------------------------- login (mode server)
+
+def current_user(request: Request):
+    """Mode lokal: tanpa login, dianggap admin. Mode server: dari cookie sesi."""
+    if auth.is_local():
+        return dict(name="lokal", role="admin")
+    tok = request.cookies.get(auth.COOKIE)
+    return auth.verify_token(tok) if tok else None
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if auth.is_local() or path in PUBLIC_PATHS:
+        return await call_next(request)
+    user = current_user(request)
+    if user is None:
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "belum login"}, status_code=401, headers=NO_STORE)
+        return RedirectResponse("/login", status_code=303)
+    request.state.user = user
+    return await call_next(request)
+
+
+def require_admin(request: Request):
+    u = current_user(request)
+    if not u or u["role"] != "admin":
+        raise HTTPException(403, "hanya admin")
+    return u
+
+
+def require_local():
+    if not auth.is_local():
+        raise HTTPException(403, "fitur ini hanya ada saat app dijalankan di Mac (mode lokal) — pakai upload")
+
+
+def _secure_cookie(request: Request):
+    return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+
+
+@app.get("/login")
+def login_page(request: Request):
+    if auth.is_local() or current_user(request):
+        return RedirectResponse("/", status_code=303)
+    return FileResponse(os.path.join(ROOT, "static", "login.html"), headers=NO_STORE)
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/login")
+def api_login(body: LoginIn, request: Request):
+    if auth.is_local():
+        return dict(ok=True)
+    if not auth.load_users():
+        raise HTTPException(503, "belum ada pengguna — buat admin dulu: python3 app.py adduser <nama> --admin")
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "?").split(",")[0].strip()
+    try:
+        tok = auth.login(body.username, body.password, ip)
+    except PermissionError as e:
+        raise HTTPException(429, str(e))
+    if not tok:
+        raise HTTPException(401, "nama pengguna atau password salah")
+    resp = JSONResponse(dict(ok=True), headers=NO_STORE)
+    resp.set_cookie(auth.COOKIE, tok, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=_secure_cookie(request), path="/")
+    return resp
+
+
+@app.post("/api/logout")
+def api_logout(request: Request):
+    resp = JSONResponse(dict(ok=True), headers=NO_STORE)
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    u = current_user(request)
+    return JSONResponse(dict(user=u["name"], role=u["role"], local=auth.is_local(), mode=auth.mode()), headers=NO_STORE)
+
+
+@app.get("/api/users")
+def api_users(request: Request):
+    require_admin(request)
+    return auth.list_users()
+
+
+class UserIn(BaseModel):
+    name: str
+    password: Optional[str] = None
+    role: Optional[str] = "user"
+
+
+@app.post("/api/users")
+def api_users_add(body: UserIn, request: Request):
+    require_admin(request)
+    try:
+        name = auth.add_user(body.name, body.password or "", body.role or "user")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True, name=name)
+
+
+@app.post("/api/users/password")
+def api_users_password(body: UserIn, request: Request):
+    """Admin ganti password siapa pun; pengguna biasa hanya password sendiri."""
+    me = current_user(request)
+    name = auth.norm_name(body.name)
+    if me["role"] != "admin" and name != me["name"]:
+        raise HTTPException(403, "hanya boleh ganti password sendiri")
+    try:
+        auth.set_password(name, body.password or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True)
+
+
+@app.post("/api/users/role")
+def api_users_role(body: UserIn, request: Request):
+    require_admin(request)
+    try:
+        auth.set_role(auth.norm_name(body.name), body.role or "user")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True)
+
+
+@app.delete("/api/users")
+def api_users_delete(name: str, request: Request):
+    me = require_admin(request)
+    name = auth.norm_name(name)
+    if name == me["name"]:
+        raise HTTPException(400, "tidak bisa menghapus akun sendiri")
+    try:
+        auth.remove_user(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True)
+
+
+@app.get("/healthz")
+def healthz():
+    return dict(ok=True)
+
+_lock = threading.Lock()
+_cache = {}  # toko -> (signature, (O, I, A, files))
+
+
+def clean(x):
+    if isinstance(x, dict):
+        return {str(k): clean(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [clean(v) for v in x]
+    if isinstance(x, float):
+        return None if (math.isnan(x) or math.isinf(x)) else x
+    if hasattr(x, "item"):
+        try:
+            return clean(x.item())
+        except Exception:
+            return str(x)
+    if x is None or isinstance(x, (str, int, bool)):
+        return x
+    return str(x)
+
+
+def _signature(toko):
+    d = analysis.toko_dir(toko)
+    extra = [os.path.join(d, n) for n in ("hpp.json", "hpp_map.json", "ads.json") if os.path.exists(os.path.join(d, n))]
+    return tuple((os.path.basename(p), os.stat(p).st_mtime, os.stat(p).st_size) for p in analysis.toko_files(toko) + extra)
+
+
+def get_data(toko):
+    if toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{toko}' tidak ada")
+    sig = _signature(toko)
+    with _lock:
+        hit = _cache.get(toko)
+        if hit and hit[0] == sig:
+            return hit[1]
+        data = analysis.load_toko(toko)
+        _cache[toko] = (sig, data)
+        return data
+
+
+@app.get("/")
+def index():
+    # jangan di-cache browser: tiap update kode langsung kebaca tanpa hard-refresh
+    return FileResponse(os.path.join(ROOT, "static", "index.html"), headers=NO_STORE)
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
+
+
+@app.get("/api/toko")
+def api_toko():
+    out = []
+    for t in analysis.list_toko():
+        out.append(dict(name=t, files=len(analysis.toko_files(t))))
+    return out
+
+
+class TokoIn(BaseModel):
+    name: str
+
+
+@app.post("/api/toko")
+def api_toko_create(body: TokoIn):
+    d = analysis.toko_dir(body.name)
+    os.makedirs(d, exist_ok=True)
+    return dict(ok=True, name=os.path.basename(d))
+
+
+@app.delete("/api/toko")
+def api_toko_delete(toko: str, request: Request):
+    require_admin(request)
+    d = analysis.toko_dir(toko)
+    if not os.path.isdir(d):
+        raise HTTPException(404, "toko tidak ada")
+    shutil.rmtree(d)
+    _cache.pop(toko, None)
+    return dict(ok=True)
+
+
+@app.get("/api/files")
+def api_files(toko: str):
+    O, I, A, files, raw = get_data(toko)
+    return clean(files)
+
+
+@app.delete("/api/files")
+def api_files_delete(toko: str, name: str):
+    p = os.path.join(analysis.toko_dir(toko), os.path.basename(name))
+    if not os.path.isfile(p):
+        raise HTTPException(404, "file tidak ada")
+    os.remove(p)
+    return dict(ok=True)
+
+
+@app.post("/api/upload")
+async def api_upload(toko: str = Form(...), files: List[UploadFile] = File(...)):
+    d = analysis.toko_dir(toko)
+    os.makedirs(d, exist_ok=True)
+    results = []
+    for f in files:
+        name = os.path.basename(f.filename or "file")
+        dest = os.path.join(d, name)
+        with open(dest, "wb") as fh:
+            shutil.copyfileobj(f.file, fh)
+        kind = parsers.detect(dest)
+        if kind is None:
+            os.remove(dest)
+            results.append(dict(file=name, ok=False, msg="format tidak dikenali — file dibuang"))
+        else:
+            results.append(dict(file=name, ok=True, kind=parsers.KINDS[kind]))
+    return results
+
+
+@app.get("/api/scan")
+def api_scan(path: str = "~/Downloads"):
+    """Daftar file export yang dikenali di sebuah folder (tanpa menyalin). Hanya mode lokal."""
+    require_local()
+    p = os.path.expanduser(path)
+    if not os.path.isdir(p):
+        raise HTTPException(400, "folder tidak ada")
+    out = []
+    for fp in sorted(glob.glob(os.path.join(p, "*"))):
+        low = fp.lower()
+        if not (low.endswith(".xlsx") or low.endswith(".csv")):
+            continue
+        base = os.path.basename(fp)
+        quick = None
+        if base.startswith("Order.all"):
+            quick = "shopee_orders"
+        elif base.lower().startswith("income.") or base.lower().startswith("income_") or "penghasilan" in low:
+            quick = "unknown_income"
+        elif base.lower().startswith("semua pesanan"):
+            quick = "tiktok_orders"
+        elif base.lower().startswith("onhold"):
+            quick = "tiktok_unsettled"
+        if quick is None:
+            continue
+        st = os.stat(fp)
+        out.append(dict(path=fp, file=base, size=st.st_size, mtime=st.st_mtime, guess=quick))
+    return out
+
+
+class ImportIn(BaseModel):
+    toko: str
+    paths: List[str]
+
+
+@app.post("/api/import")
+def api_import(body: ImportIn):
+    require_local()
+    d = analysis.toko_dir(body.toko)
+    os.makedirs(d, exist_ok=True)
+    results = []
+    for src in body.paths:
+        src = os.path.expanduser(src)
+        if not os.path.isfile(src):
+            results.append(dict(file=src, ok=False, msg="tidak ada"))
+            continue
+        kind = parsers.detect(src)
+        if kind is None:
+            results.append(dict(file=os.path.basename(src), ok=False, msg="format tidak dikenali"))
+            continue
+        shutil.copy2(src, os.path.join(d, os.path.basename(src)))
+        results.append(dict(file=os.path.basename(src), ok=True, kind=parsers.KINDS[kind]))
+    return results
+
+
+@app.get("/api/summary")
+def api_summary(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
+                d_from: Optional[str] = None, d_to: Optional[str] = None):
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    U = raw.get("unsettled")
+    ADS = adsmod.load(analysis.toko_dir(toko))
+    res = analysis.monthly(O, I, platform, m_from, m_to, U, ADS, d_from, d_to)
+    res["breakdown"] = analysis.breakdowns(O, I, platform, m_from, m_to, top=None)
+    res["unsettled_status"] = analysis.unsettled_by_status(O, I, platform, m_from, m_to, U)
+    res["adjustments"] = analysis.adjustments(A, m_from, m_to) if platform in ("all", "tiktok", "tiktok_all", "tokopedia") else []
+    res["reconcile"] = analysis.reconcile(analysis._channel_filter(O, platform), analysis._channel_filter(I, platform))
+    res["all_months"] = sorted(set(O["month"].dropna())) if len(O) else []
+    res["files"] = files
+    # per-platform mini totals untuk tab ringkasan
+    res["by_platform"] = {}
+    for p in ("shopee", "tiktok", "tokopedia"):
+        t = analysis.monthly(O, I, p, m_from, m_to, U, ADS, d_from, d_to)["totals"]
+        if t:
+            res["by_platform"][p] = t
+    return JSONResponse(clean(res))
+
+
+@app.get("/api/produk.xlsx")
+def api_produk_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
+                    d_from: Optional[str] = None, d_to: Optional[str] = None):
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    wb = analysis.export_produk_xlsx(toko, O, I, platform, m_from, m_to)
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    name = f"Produk {toko} {platform} {m_from or ''}-{m_to or ''}.xlsx".replace("  ", " ")
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/api/export.xlsx")
+def api_export(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = None, d_from: Optional[str] = None, d_to: Optional[str] = None):
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    wb = analysis.export_xlsx(toko, O, I, m_from, m_to, raw.get("unsettled"), adsmod.load(analysis.toko_dir(toko)), d_from, d_to)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    name = f"Laporan Penjualan AKRUAL {toko} {m_from or ''}-{m_to or ''}.xlsx".replace("  ", " ")
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# ---------------------------------------------------------------- Iklan
+
+@app.get("/api/ads")
+def api_ads(toko: str):
+    O, I, A, files, raw = get_data(toko)
+    d = analysis.toko_dir(toko)
+    data = adsmod.load(d)
+    data["data_months"] = sorted(set(O["month"].dropna())) if len(O) else []
+    return JSONResponse(clean(data))
+
+
+class AdsIn(BaseModel):
+    toko: str
+    channels: List[str]
+    attribution: dict
+    months: dict
+    notes: Optional[str] = ""
+    prorate: Optional[bool] = False
+
+
+@app.post("/api/ads")
+def api_ads_save(body: AdsIn):
+    d = analysis.toko_dir(body.toko)
+    os.makedirs(d, exist_ok=True)
+    out = adsmod.save(d, body.dict())
+    return clean(dict(ok=True, months=len(out["months"])))
+
+
+# ---------------------------------------------------------------- HPP
+
+@app.get("/api/hpp")
+def api_hpp(toko: str):
+    O, I, A, files, raw = get_data(toko)
+    d = analysis.toko_dir(toko)
+    master, mapping = hppmod.load(d)
+    return JSONResponse(clean(dict(master=master, mapping=mapping, table=hppmod.mapping_table(O, d))))
+
+
+class HppImportIn(BaseModel):
+    toko: str
+    url: str
+
+
+@app.post("/api/hpp/import")
+def api_hpp_import(body: HppImportIn):
+    d = analysis.toko_dir(body.toko)
+    os.makedirs(d, exist_ok=True)
+    try:
+        master = hppmod.import_from(d, url=body.url.strip())
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    return clean(dict(ok=True, n=len(master["items"]), updated=master["updated"]))
+
+
+@app.post("/api/hpp/upload")
+async def api_hpp_upload(toko: str = Form(...), file: UploadFile = File(...)):
+    d = analysis.toko_dir(toko)
+    os.makedirs(d, exist_ok=True)
+    data = await file.read()
+    try:
+        master = hppmod.import_from(d, data=data, filename=file.filename or "hpp.xlsx")
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    return clean(dict(ok=True, n=len(master["items"]), updated=master["updated"]))
+
+
+class HppMapIn(BaseModel):
+    toko: str
+    product: str
+    sku: Optional[str] = ""
+    item: Optional[str] = None      # None = kembali ke otomatis, "" = sengaja tanpa HPP
+
+
+@app.post("/api/hpp/map")
+def api_hpp_map(body: HppMapIn):
+    d = analysis.toko_dir(body.toko)
+    master, mapping = hppmod.load(d)
+    key = (body.product + hppmod.SEP + body.sku) if body.sku else body.product
+    if body.item is None:
+        mapping.pop(key, None)
+    else:
+        mapping[key] = body.item
+    hppmod.save(d, mapping=mapping)
+    return dict(ok=True)
+
+
+class HppItemIn(BaseModel):
+    toko: str
+    name: str
+    hpp: Optional[float] = None
+    kode: Optional[str] = ""
+    remove: bool = False
+
+
+@app.post("/api/hpp/item")
+def api_hpp_item(body: HppItemIn):
+    d = analysis.toko_dir(body.toko)
+    if body.remove:
+        hppmod.remove_item(d, body.name.strip())
+    else:
+        if body.hpp is None or not body.name.strip():
+            raise HTTPException(400, "nama & HPP wajib")
+        hppmod.add_item(d, body.name.strip(), body.hpp, kode=(body.kode or "").strip())
+    return dict(ok=True)
+
+
+class HppColIn(BaseModel):
+    toko: str
+    col: str
+
+
+@app.post("/api/hpp/col")
+def api_hpp_col(body: HppColIn):
+    d = analysis.toko_dir(body.toko)
+    master, mapping = hppmod.load(d)
+    master["col"] = body.col if body.col in ("hpp", "pembulatan") else "hpp"
+    hppmod.save(d, master=master)
+    return dict(ok=True)
+
+
+@app.get("/api/audit")
+def api_audit(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = None, d_from: Optional[str] = None, d_to: Optional[str] = None):
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    res = dict(coverage=audit.coverage(O, I, m_from, m_to),
+               reconcile=audit.reconcile_files(raw, files),
+               **audit.findings(O, I, raw, m_from, m_to))
+    return JSONResponse(clean(res))
+
+
+@app.get("/api/trace")
+def api_trace(toko: str, order_id: str):
+    O, I, A, files, raw = get_data(toko)
+    return JSONResponse(clean(audit.trace(O, I, A, raw, order_id)))
+
+
+@app.get("/api/audit.xlsx")
+def api_audit_xlsx(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = None, d_from: Optional[str] = None, d_to: Optional[str] = None):
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    wb = audit.export_audit_xlsx(toko, audit.coverage(O, I, m_from, m_to), audit.reconcile_files(raw, files), audit.findings(O, I, raw, m_from, m_to))
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    name = f"Audit Data Penjualan {toko} {m_from or ''}-{m_to or ''}.xlsx"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _cli(argv):
+    """python3 app.py adduser <nama> [--admin]   |   python3 app.py passwd <nama>   |   python3 app.py users"""
+    import getpass
+    cmd = argv[0]
+    if cmd == "users":
+        for u in auth.list_users():
+            print(f"{u['name']:20s} {u['role']}")
+        return
+    if cmd in ("adduser", "passwd"):
+        if len(argv) < 2:
+            sys.exit("pakai: python3 app.py adduser <nama> [--admin]")
+        name = argv[1]
+        pw = os.environ.get("SA_NEW_PASS") or getpass.getpass("password (min 8): ")
+        if not os.environ.get("SA_NEW_PASS") and getpass.getpass("ulangi password: ") != pw:
+            sys.exit("password tidak sama")
+        if cmd == "adduser":
+            name = auth.add_user(name, pw, "admin" if "--admin" in argv else "user")
+            print(f"pengguna '{name}' dibuat ({'admin' if '--admin' in argv else 'user'}) di {auth.users_path()}")
+        else:
+            auth.set_password(auth.norm_name(name), pw)
+            print("password diganti")
+        return
+    sys.exit(f"perintah tidak dikenal: {cmd}\n{_cli.__doc__}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        _cli(sys.argv[1:])
+        sys.exit(0)
+    host = os.environ.get("SA_HOST") or ("0.0.0.0" if not auth.is_local() else "127.0.0.1")
+    port = int(os.environ.get("SA_PORT") or 8766)
+    made = auth.bootstrap_from_env()
+    if made:
+        print(f"admin pertama dibuat dari env: {made}")
+    print(f"Sales Akrual [{auth.mode()}] data={analysis.DATA} → http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")

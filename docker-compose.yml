@@ -1,0 +1,35 @@
+# Sales Akrual di VPS.
+#   cp .env.example .env   → isi SA_DOMAIN (domain yang sudah diarahkan ke IP VPS) & SA_ADMIN_*
+#   docker compose up -d --build
+# Caddy otomatis ambil sertifikat HTTPS (Let's Encrypt) untuk SA_DOMAIN.
+# Tanpa domain: set SA_DOMAIN=:80 → app diakses http://IP-VPS (tanpa HTTPS, tidak disarankan untuk data toko).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SA_MODE: server
+      SA_DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    expose:
+      - "8766"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:
+  caddy_config:

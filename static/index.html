@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales Akrual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#FFFFFF; --bg2:#F6F3FF; --lav:#EDE7FF; --ink:#1E1E1E; --ink2:#5B5B6B; --muted:#8A8A99;
+  --line:#E6E3F0; --line2:#1E1E1E;
+  --orange:#F4561E; --purple:#5E1AF1; --purple-dk:#340E7C; --teal:#0F766E;
+  --good:#1B8A4C; --warn:#C7811A; --bad:#C62828;
+  --c-shopee:#F4561E; --c-tiktok:#5E1AF1; --c-tokped:#0F766E;
+  --radius:10px; --shadow:5px 5px 10px rgba(0,0,0,.08);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:var(--purple)}
+header{background:linear-gradient(90deg,var(--lav),#fff 70%);border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo{width:34px;height:34px;border-radius:8px;background:var(--purple-dk);display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px}
+header h1{font-size:18px;margin:0;font-weight:800}
+header .sub{color:var(--ink2);font-size:12px}
+.wrap{padding:16px 20px;max-width:1500px;margin:0 auto}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
+.filters label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+select,input[type=text],input[type=month]{font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--ink);min-width:150px}
+button{font:inherit;font-weight:600;padding:8px 14px;border-radius:5px;border:1px solid var(--line2);background:#fff;color:var(--ink);cursor:pointer}
+button.primary{background:var(--orange);color:#fff;border-color:var(--orange);box-shadow:var(--shadow)}
+button.ghost{border-color:var(--line);color:var(--ink2)}
+button:disabled{opacity:.5;cursor:default}
+.tabs{display:flex;gap:4px;border-bottom:2px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
+.tabs button{border:none;background:none;padding:10px 14px;border-radius:0;color:var(--ink2);font-weight:600;border-bottom:3px solid transparent;margin-bottom:-2px}
+.tabs button.on{color:var(--purple);border-bottom-color:var(--purple)}
+.panel{display:none}.panel.on{display:block}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:12px 14px}
+.tile .k{font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.tile .v{font-size:19px;font-weight:800;margin-top:2px;letter-spacing:-.01em;white-space:nowrap}
+.tile .s{font-size:12px;color:var(--muted);margin-top:2px}
+.card{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 4px;font-weight:800}
+.card .desc{color:var(--ink2);font-size:12px;margin-bottom:10px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.chart{position:relative;height:280px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.04em;background:var(--bg2);position:sticky;top:0}
+th:first-child,td:first-child,th.l,td.l{text-align:left;white-space:normal}
+tr.sec td{background:var(--bg2);font-weight:700;color:var(--purple-dk)}
+tr.tot td{font-weight:800;background:#FFF1EA}
+tr.sub td:first-child{padding-left:22px;color:var(--ink2)}
+tr.dim td{color:var(--muted)}
+.tblwrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:6px 0}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--lav);color:var(--purple-dk)}
+.pill.ok{background:#E3F4EA;color:var(--good)}.pill.warn{background:#FFF2E0;color:var(--warn)}.pill.bad{background:#FDE7E7;color:var(--bad)}
+.note{background:var(--bg2);border-left:4px solid var(--purple);padding:10px 12px;border-radius:6px;font-size:13px;color:var(--ink2);margin:10px 0}
+.drop{border:2px dashed var(--purple);border-radius:var(--radius);padding:22px;text-align:center;color:var(--ink2);background:var(--bg2)}
+.drop.over{background:var(--lav)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.small{font-size:12px;color:var(--muted)}
+.muted{color:var(--muted)}
+.neg{color:var(--bad)}
+.empty{padding:40px;text-align:center;color:var(--ink2)}
+.filelist td{white-space:normal}
+details.f{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px}
+details.f summary{cursor:pointer;font-weight:700;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
+.pill.info{background:var(--lav);color:var(--purple-dk)}
+#toast{position:fixed;bottom:18px;right:18px;background:var(--ink);color:#fff;padding:10px 14px;border-radius:8px;display:none;max-width:420px;z-index:9;font-size:13px}
+.tt{position:absolute;pointer-events:none;background:#fff;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;font-size:12px;box-shadow:var(--shadow);display:none;z-index:5}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">MKG</div>
+  <div><h1>Sales Akrual</h1><div class="sub">Penjualan riil per bulan order — sudah dipotong batal, refund & biaya marketplace. Shopee · TikTok · Tokopedia</div></div>
+  <div id="userbox" class="row" style="margin-left:auto;display:none;gap:8px"><span class="small">masuk sebagai <b id="meName"></b> <span class="pill" id="meRole"></span></span><button class="ghost" id="btnMyPw" title="ganti password sendiri">password</button><button class="ghost" id="btnLogout">keluar</button></div>
+</header>
+
+<div class="wrap">
+  <div class="filters">
+    <label>Toko <select id="toko"></select></label>
+    <label>Platform <select id="platform">
+      <option value="all">Gabungan (semua)</option>
+      <option value="shopee">Shopee</option>
+      <option value="tiktok">TikTok Shop</option>
+      <option value="tokopedia">Tokopedia</option>
+      <option value="tiktok_all">TikTok + Tokopedia</option>
+    </select></label>
+    <label>Dari tanggal <input type="date" id="dfrom" autocomplete="off"></label>
+    <label>Sampai tanggal <input type="date" id="dto" autocomplete="off"></label>
+    <input type="hidden" id="mfrom"><input type="hidden" id="mto">
+    <button class="primary" id="btnLoad">Hitung</button>
+    <button id="btnExport">⬇ Excel laporan</button>
+    <button class="ghost" id="btnReset" title="kosongkan filter bulan">✕ filter</button>
+    <span class="small" id="loadinfo"></span>
+  </div>
+
+  <div class="tabs">
+    <button class="on" data-tab="ringkas">Ringkasan</button>
+    <button data-tab="bulan">Per bulan (laporan)</button>
+    <button data-tab="produk">Produk</button>
+    <button data-tab="detail">Status · Batal · Bayar</button>
+    <button data-tab="hpp">HPP & Laba</button>
+    <button data-tab="iklan">Iklan</button>
+    <button data-tab="audit">Audit</button>
+    <button data-tab="data">Data & file</button>
+  </div>
+
+  <!-- RINGKASAN -->
+  <div class="panel on" id="p-ringkas">
+    <div id="ringkasEmpty" class="empty">Pilih toko lalu klik <b>Hitung</b>. Belum punya toko? Buka tab <b>Data & file</b>.</div>
+    <div id="ringkasBody" style="display:none">
+      <div class="note" id="periodNote" style="border-left-color:var(--orange)"></div>
+      <div class="tiles" id="tiles"></div>
+      <div class="note" id="noteSettle"></div>
+      <div class="grid2">
+        <div class="card"><h2>Dashboard vs riil vs dana diterima</h2><div class="desc">Per bulan order. Nilai pesanan masuk ≈ angka dashboard seller center (belum dipotong batal).</div><div class="chart"><canvas id="chBruto"></canvas></div><div class="legend" id="lgBruto"></div></div>
+        <div class="card"><h2>Peredaran bruto per channel</h2><div class="desc">Hanya order non-batal, nilai setelah diskon penjual.</div><div class="chart"><canvas id="chChannel"></canvas></div><div class="legend" id="lgChannel"></div></div>
+      </div>
+      <div class="card"><h2>Rincian potongan marketplace</h2><div class="desc">Dari laporan penghasilan, dipasangkan ke order lalu diakui di <b>bulan order dibuat</b>. Hanya order yang sudah muncul di laporan penghasilan (lihat "bruto settle"); order yang belum settle belum punya potongan.</div>
+        <div class="grid2">
+          <div><div class="tblwrap" style="max-height:320px"><table id="tblFee"></table></div></div>
+          <div><div class="chart" style="height:300px"><canvas id="chFee"></canvas></div><div class="legend" id="lgFee"></div></div>
+        </div>
+      </div>
+      <div class="card"><h2>Order belum cair — per status pesanan</h2><div class="desc">Order terjual yang belum muncul di laporan penghasilan. <b>Taksiran</b> = bruto × rasio neto/bruto order yang sudah cair (per platform & bulan; kalau bulan itu belum punya ≥30 order cair, pakai rasio semua bulan). TikTok: kalau file <i>Onhold-unsettled</i> diupload, dipakai estimasi resmi per order. Status berisiko (pembatalan/pengembalian diajukan) ditandai.</div><div class="tblwrap" style="max-height:320px"><table id="tblUns"></table></div></div>
+      <div class="card"><h2>Tingkat pembatalan</h2><div class="desc">% order batal dari order masuk, per bulan.</div><div class="chart"><canvas id="chBatal"></canvas></div></div>
+      <div class="card"><h2>Ringkasan per platform</h2><div class="desc">Total periode terpilih.</div><div class="tblwrap"><table id="tblPlat"></table></div></div>
+    </div>
+  </div>
+
+  <!-- PER BULAN -->
+  <div class="panel" id="p-bulan">
+    <div class="card">
+      <h2>Laporan penjualan — basis akrual</h2>
+      <div class="desc">Semua angka diakui di <b>bulan order dibuat</b>; potongan & refund dari laporan penghasilan dipasangkan ke order-nya. Order yang dananya dikembalikan penuh = retur, keluar dari bruto walau status non-batal. Potongan ditampilkan positif (sudah dibalik tandanya).</div>
+      <div class="tblwrap"><table id="tblBulan"></table></div>
+      <div class="small" style="margin-top:8px" id="bulanNote"></div>
+    </div>
+  </div>
+
+  <!-- PRODUK -->
+  <div class="panel" id="p-produk">
+    <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Produk — bruto terjual & batal</h2><div class="desc">Semua produk, urut bruto non-batal pada periode terpilih. Klik ▸ di nama produk untuk membuka varian (warna/ukuran). <b>Order terjual</b> = order unik: di baris produk satu order dihitung sekali walau berisi beberapa warna, di baris varian order yang sama bisa muncul di beberapa warna — jadi jumlah order varian bisa lebih besar dari produknya; bandingkan varian pakai <b>qty</b> dan <b>bruto</b>. Excel berisi semua produk + sheet per varian, mengikuti filter di atas.</div></div><div class="row"><input type="text" id="prodSearch" placeholder="🔍 cari produk / item HPP / varian…" style="min-width:280px"><button class="ghost" id="btnVarAll">▾ buka semua varian</button><button id="btnProdukX">⬇ Excel produk</button></div></div><div id="prodSearchInfo" class="small" style="margin-bottom:6px"></div><div class="tblwrap"><table id="tblProduk"></table></div></div>
+  </div>
+
+  <!-- DETAIL -->
+  <div class="panel" id="p-detail">
+    <div class="grid2">
+      <div class="card"><h2>Status pesanan</h2><div class="desc">Jumlah order & nilai per status (status terakhir dari export terbaru).</div><div class="tblwrap"><table id="tblStatus"></table></div></div>
+      <div class="card"><h2>Alasan pembatalan</h2><div class="desc">Top 15.</div><div class="tblwrap"><table id="tblCancel"></table></div></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>Metode bayar vs batal</h2><div class="desc">COD biasanya penyumbang batal terbesar.</div><div class="tblwrap"><table id="tblPay"></table></div></div>
+      <div class="card"><h2>Penyesuaian non-order TikTok</h2><div class="desc">Potongan/penggantian di luar order (mis. pembayaran GMV untuk iklan, penggantian logistik) — per bulan cair, tidak masuk akrual penjualan.</div><div class="tblwrap"><table id="tblAdj"></table></div></div>
+    </div>
+    <div class="card"><h2>Cek silang data</h2><div class="desc">Bruto per order dari file pesanan vs "harga produk" di laporan penghasilan untuk order yang ada di keduanya.</div><div id="recon"></div></div>
+  </div>
+
+  <!-- HPP -->
+  <div class="panel" id="p-hpp">
+    <div class="grid2">
+      <div class="card">
+        <h2>Master HPP — toko <span class="tokoName pill" style="font-size:13px">…</span></h2>
+        <div class="desc">Impor dari Google Sheet (link harus bisa dibuka "siapa saja yang punya link") atau upload xlsx/csv. Wajib ada kolom <b>Nama Produk</b> dan <b>HPP</b>; kolom <b>Pembulatan</b> & <b>Harga Jual</b> ikut dibaca kalau ada.</div>
+        <div class="row"><input type="text" id="hppUrl" placeholder="https://docs.google.com/spreadsheets/d/…" style="min-width:360px;flex:1"><button class="primary" id="btnHppImport">Impor dari Sheet</button></div>
+        <div class="row" style="margin-top:8px"><label style="font-size:12px;color:var(--purple);cursor:pointer;text-decoration:underline">atau upload file<input type="file" id="hppFile" accept=".xlsx,.csv" style="display:none"></label>
+          <span class="small" style="margin-left:auto">Pakai kolom: <select id="hppCol" style="min-width:120px"><option value="hpp">HPP (presisi)</option><option value="pembulatan">Pembulatan</option></select></span></div>
+        <div id="hppInfo" class="small" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:8px"><input type="text" id="hppNewName" placeholder="item manual, mis. Personalized nama mukena" style="min-width:220px;flex:1"><input type="text" id="hppNewKode" placeholder="kode SKU (opsional)" style="min-width:130px"><input type="text" id="hppNewVal" placeholder="HPP (Rp)" style="min-width:100px"><button id="btnHppAdd">+ Tambah item</button></div>
+        <div class="small muted">Item manual tetap tersimpan walau sheet diimpor ulang; nama yang sama dengan sheet → item manual yang dipakai.</div>
+        <div class="tblwrap" style="max-height:360px;margin-top:8px"><table id="tblHppItems"></table></div>
+      </div>
+      <div class="card">
+        <h2>Pemetaan listing → item HPP — toko <span class="tokoName pill" style="font-size:13px">…</span></h2>
+        <div class="desc">Urutan pencocokan: (1) <b>kode SKU</b> listing = kolom Kode di master (bundle "A+B" = jumlah HPP komponen), (2) pilihan manual, (3) nama model di nama listing (Runa, Rumi, …). Yang belum ketemu ada di paling atas — pilih manual per listing/SKU. Pilih "— tanpa HPP —" kalau memang sengaja. Setelah ubah, klik <b>Hitung</b> lagi di atas.</div>
+        <div id="hppMapInfo" class="small"></div>
+        <div class="tblwrap" style="max-height:520px;margin-top:8px"><table id="tblHppMap"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IKLAN -->
+  <div class="panel" id="p-iklan">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>Biaya iklan per bulan — toko <span class="tokoName pill" style="font-size:13px">…</span></h2><div class="desc">Input manual, bisa diedit langsung di sel. Baris <b>atribusi</b> menentukan iklan channel itu dibebankan ke penjualan platform mana (dipakai saat filter platform Shopee / TikTok; filter Gabungan memakai semua). Setelah ubah, klik <b>Simpan</b> lalu <b>Hitung</b>.</div></div>
+        <div class="row"><button class="ghost" id="btnAdsAddMonth">+ Bulan</button><button class="ghost" id="btnAdsAddChan">+ Channel</button><button class="primary" id="btnAdsSave">Simpan</button></div>
+      </div>
+      <div id="adsInfo" class="small" style="margin:6px 0"></div>
+      <div class="tblwrap" style="max-height:60vh"><table id="tblAds"></table></div>
+      <div class="small muted" style="margin-top:8px">ACR = total iklan / peredaran bruto riil. Breakeven iklan: GPM harus lebih besar dari ACR. Laba setelah iklan = laba setelah marketplace − iklan (masih sebelum opex/gaji).</div>
+      <div style="margin-top:8px" class="row"><label class="small">Catatan <input type="text" id="adsNotes" style="min-width:420px"></label>
+        <label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="adsProrate"> Prorata per hari saat filter tanggal memotong bulan <span class="muted">(matikan kalau angka bulan berjalan sudah realisasi sampai tanggal upload)</span></label></div>
+    </div>
+  </div>
+
+  <!-- AUDIT -->
+  <div class="panel" id="p-audit">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>Audit data penjualan</h2><div class="desc">Memeriksa 4 hal: (1) kelengkapan file per bulan, (2) rekonsiliasi hasil hitung vs total resmi di ringkasan laporan penghasilan platform, (3) anomali per order, (4) jejak satu order. Ikut filter toko & rentang bulan di atas.</div></div>
+        <div class="row"><button class="primary" id="btnAudit">Jalankan audit</button><button id="btnAuditX">⬇ Excel audit</button></div>
+      </div>
+      <div id="auditSum" class="row" style="margin-top:6px"></div>
+    </div>
+    <div id="auditBody" style="display:none">
+      <div class="card"><h2>1 · Kelengkapan data per bulan</h2><div class="desc">Hari kosong = tanggal tanpa satu pun order padahal bulan itu ada file pesanan (indikasi export tidak menutup seluruh bulan). Settle % = porsi bruto yang sudah ada di laporan penghasilan.</div><div class="tblwrap"><table id="tblCov"></table></div></div>
+      <div class="card"><h2>2 · Rekonsiliasi vs total resmi platform</h2><div class="desc">Per file laporan penghasilan: angka di sheet ringkasan resmi (Summary / Laporan) dibandingkan dengan jumlah rincian per order yang dibaca app. Selisih ≠ 0 berarti ada baris yang tidak terbaca atau platform sendiri tidak konsisten.</div><div id="recon2"></div></div>
+      <div class="card"><h2>3 · Temuan per order</h2><div class="desc">Klik judul temuan untuk melihat daftar ordernya (maks. 300 baris; lengkapnya di Excel audit).</div><div id="findings"></div></div>
+      <div class="card"><h2>4 · Jejak order</h2><div class="desc">Masukkan No. Pesanan / Order ID untuk melihat semua baris sumbernya di tiap file dan bagaimana order itu dihitung.</div>
+        <div class="row"><input type="text" id="traceId" placeholder="mis. 260701FPTJJK7U atau 586421039112685550" style="min-width:320px"><button id="btnTrace">Telusuri</button></div>
+        <div id="traceOut" style="margin-top:10px"></div></div>
+    </div>
+  </div>
+
+  <!-- DATA -->
+  <div class="panel" id="p-data">
+    <div class="grid2">
+      <div class="card">
+        <h2>Toko</h2>
+        <div class="desc">Satu toko = satu folder file. File export Shopee tidak mencantumkan nama toko, jadi pisahkan sendiri per toko.</div>
+        <div class="row"><input type="text" id="newToko" placeholder="nama toko, mis. Eltahj"><button id="btnToko">+ Buat toko</button><button class="ghost" id="btnDelToko">Hapus toko aktif</button></div>
+      </div>
+      <div class="card">
+        <h2>Upload file export</h2>
+        <div class="desc">Format yang dikenali otomatis: Shopee <b>Order.all*.xlsx</b> & <b>Income*.xlsx</b> (Laporan Penghasilan); TikTok <b>Semua pesanan*.csv</b> & <b>income_*.xlsx</b> (Tokopedia ikut di dalam file TikTok); opsional TikTok <b>Onhold-unsettled*.xlsx</b> untuk estimasi resmi dana yang belum cair. Boleh periode tumpang-tindih — baris yang sama diambil dari file terbaru.</div>
+        <div class="row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em;display:flex;flex-direction:column;gap:4px">Masuk ke toko <select id="upToko" style="min-width:200px"></select></label><span class="small" style="align-self:end">File yang tidak punya petunjuk toko (mis. laporan penghasilan TikTok) akan masuk ke toko yang dipilih di sini.</span></div>
+        <div class="drop" id="drop">Tarik file ke sini atau <label style="color:var(--purple);cursor:pointer;text-decoration:underline">pilih file<input type="file" id="fileInput" multiple style="display:none"></label></div>
+        <div id="upResult" class="small" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <div class="card" id="scanCard">
+      <h2>Ambil dari folder di Mac ini</h2>
+      <div class="desc">Scan folder (default Downloads), centang file yang mau disalin ke toko aktif. Kolom <i>petunjuk</i> = brand terbanyak di nama produk / username penjual, biar gampang milih file toko mana.</div>
+      <div class="row"><input type="text" id="scanPath" value="~/Downloads" style="min-width:300px"><button id="btnScan">Scan</button><label style="font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em;display:flex;flex-direction:column;gap:4px">Salin ke toko <select id="scanToko" style="min-width:180px"></select></label><button class="primary" id="btnImport" disabled>Salin yang dicentang</button><span class="small" id="scanInfo"></span></div>
+      <div class="tblwrap" style="max-height:340px;margin-top:10px"><table id="tblScan" class="filelist"></table></div>
+    </div>
+    <div class="card">
+      <h2>File di toko aktif</h2>
+      <div class="tblwrap"><table id="tblFiles" class="filelist"></table></div>
+    </div>
+    <div class="card" id="usersCard" style="display:none">
+      <h2>Pengguna</h2>
+      <div class="desc">Hanya admin yang lihat bagian ini. Semua pengguna bisa buat toko, upload file, hitung, dan unduh laporan; <b>hapus toko</b> dan kelola pengguna hanya admin. Password minimal 8 karakter — kasih ke orangnya lewat jalur pribadi, lalu minta dia ganti lewat tombol <i>password</i> di pojok kanan atas.</div>
+      <div class="row"><input type="text" id="nuName" placeholder="nama pengguna, mis. rina" style="min-width:160px"><input type="text" id="nuPass" placeholder="password awal (min 8)" style="min-width:200px"><select id="nuRole" style="min-width:110px"><option value="user">user</option><option value="admin">admin</option></select><button class="primary" id="btnAddUser">+ Tambah pengguna</button></div>
+      <div class="tblwrap" style="max-height:300px;margin-top:10px"><table id="tblUsers" class="filelist"></table></div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = n => (n==null||isNaN(n)) ? '–' : (Math.round(n)+0||0).toLocaleString('id-ID');
+const fmtRp = n => 'Rp ' + fmt(n);
+const fmtJt = n => Math.abs(n) >= 1e9 ? (n/1e9).toLocaleString('id-ID',{maximumFractionDigits:2})+' M' : (n/1e6).toLocaleString('id-ID',{maximumFractionDigits:1})+' jt';
+const pct = n => (n==null||isNaN(n)) ? '–' : (Math.round(n*10)/10+0||0).toLocaleString('id-ID',{maximumFractionDigits:1})+'%';
+const monthLabel = m => { if(!m) return ''; const [y,mm]=m.split('-'); return ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][+mm-1]+' '+y.slice(2); };
+const COL = {Shopee:'#F4561E', TikTok:'#5E1AF1', Tokopedia:'#0F766E'};
+let charts = {}, DATA = null;
+
+function toast(msg, ms=3500){ const t=$('#toast'); t.textContent=msg; t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none', ms); }
+async function api(url, opt){ const r = await fetch(url, opt); if(r.status===401){ location.href='/login'; throw new Error('sesi habis — masuk lagi'); } if(!r.ok){ let m=r.statusText; try{ m=(await r.json()).detail||m }catch(e){} throw new Error(m);} return r.json(); }
+const post = (url, body) => api(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+
+// ---------- pengguna & mode (server vs lokal)
+let ME = {user:'lokal', role:'admin', local:true};
+async function loadMe(){
+  try{ ME = await api('/api/me'); }catch(e){ return; }
+  $('#scanCard').style.display = ME.local ? '' : 'none';
+  $('#btnDelToko').style.display = ME.role==='admin' ? '' : 'none';
+  if(!ME.local){ $('#userbox').style.display='flex'; $('#meName').textContent=ME.user; $('#meRole').textContent=ME.role; }
+  if(!ME.local && ME.role==='admin'){ $('#usersCard').style.display=''; loadUsers(); }
+}
+async function loadUsers(){
+  const tb=$('#tblUsers');
+  try{ const list=await api('/api/users');
+    tb.innerHTML='<tr><th class="l">Nama</th><th class="l">Role</th><th class="l">Dibuat</th><th></th></tr>'+list.map(u=>`<tr><td class="l"><b>${u.name}</b>${u.name===ME.user?' <span class="muted small">(saya)</span>':''}</td><td class="l"><span class="pill ${u.role==='admin'?'':'info'}">${u.role}</span></td><td class="l">${u.created?new Date(u.created*1000).toLocaleDateString('id-ID'):'–'}</td><td><button class="ghost" onclick="userPw('${u.name}')">reset password</button> <button class="ghost" onclick="userRole('${u.name}','${u.role==='admin'?'user':'admin'}')">jadikan ${u.role==='admin'?'user':'admin'}</button> ${u.name===ME.user?'':`<button class="ghost" onclick="userDel('${u.name}')">hapus</button>`}</td></tr>`).join('');
+  }catch(e){ tb.innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; }
+}
+$('#btnAddUser').onclick=async()=>{ const name=$('#nuName').value.trim(), password=$('#nuPass').value, role=$('#nuRole').value; if(!name||!password) return toast('isi nama & password'); try{ const r=await post('/api/users',{name,password,role}); toast('pengguna dibuat: '+r.name); $('#nuName').value=''; $('#nuPass').value=''; loadUsers(); }catch(e){ toast('gagal: '+e.message); } };
+async function userPw(name){ const password=prompt('Password baru untuk '+name+' (min 8 karakter):'); if(!password) return; try{ await post('/api/users/password',{name,password}); toast('password '+name+' diganti'); }catch(e){ toast('gagal: '+e.message); } }
+async function userRole(name,role){ if(!confirm('Ubah '+name+' jadi '+role+'?')) return; try{ await post('/api/users/role',{name,role}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
+async function userDel(name){ if(!confirm('Hapus pengguna '+name+'? Sesi login-nya langsung mati.')) return; try{ await api('/api/users?name='+encodeURIComponent(name),{method:'DELETE'}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
+$('#btnMyPw').onclick=async()=>{ const password=prompt('Password baru untuk akun '+ME.user+' (min 8 karakter):'); if(!password) return; try{ await post('/api/users/password',{name:ME.user,password}); toast('password diganti — masuk lagi dengan password baru'); setTimeout(()=>location.href='/login',1200); }catch(e){ toast('gagal: '+e.message); } };
+$('#btnLogout').onclick=async()=>{ try{ await post('/api/logout',{}); }catch(e){} location.href='/login'; };
+
+// ---------- tabs
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+b.dataset.tab));
+  if(b.dataset.tab==='hpp') loadHpp();
+  if(b.dataset.tab==='iklan') loadAds();
+  try{localStorage.setItem('sa_tab',b.dataset.tab)}catch(e){}
+});
+
+// ---------- toko
+async function loadToko(){
+  const list = await api('/api/toko');
+  const sel = $('#toko'); const cur = sel.value || (()=>{try{return localStorage.getItem('sa_toko')}catch(e){return ''}})();
+  sel.innerHTML = list.map(t=>`<option value="${t.name}">${t.name} (${t.files} file)</option>`).join('') || '<option value="">— belum ada toko —</option>';
+  if(list.some(t=>t.name===cur)) sel.value = cur;
+  syncTokoName();
+  for(const id of ['upToko','scanToko']){ const s2=$('#'+id); const prev=s2.value; s2.innerHTML=list.map(t=>`<option value="${t.name}">${t.name}</option>`).join('')||'<option value="">— buat toko dulu —</option>'; s2.value=list.some(t=>t.name===prev)?prev:sel.value; }
+  if(sel.value) loadFiles();
+}
+function syncTokoName(){ document.querySelectorAll('.tokoName').forEach(e=>e.textContent=$('#toko').value||'—'); }
+$('#toko').onchange = ()=>{ try{localStorage.setItem('sa_toko',$('#toko').value)}catch(e){}; syncTokoName(); $('#upToko').value=$('#toko').value; $('#scanToko').value=$('#toko').value; loadFiles(); };
+$('#btnToko').onclick = async ()=>{ const n=$('#newToko').value.trim(); if(!n) return toast('isi nama toko'); await api('/api/toko',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}); $('#newToko').value=''; await loadToko(); $('#toko').value=n; $('#upToko').value=n; $('#scanToko').value=n; loadFiles(); toast('toko dibuat: '+n); };
+$('#btnDelToko').onclick = async ()=>{ const t=$('#toko').value; if(!t) return; if(!confirm(`Hapus toko "${t}" beserta semua filenya?`)) return; await api('/api/toko?toko='+encodeURIComponent(t),{method:'DELETE'}); await loadToko(); toast('toko dihapus'); };
+
+// ---------- files
+async function loadFiles(){
+  const t=$('#toko').value; const tb=$('#tblFiles'); if(!t){ tb.innerHTML=''; return; }
+  tb.innerHTML='<tr><td class="muted">memuat (file besar bisa 30–60 detik pertama kali)…</td></tr>';
+  try{
+    const files = await api('/api/files?toko='+encodeURIComponent(t));
+    if(!files.length){ tb.innerHTML='<tr><td class="muted">belum ada file</td></tr>'; return; }
+    tb.innerHTML = '<tr><th class="l">File</th><th class="l">Jenis</th><th class="l">Petunjuk toko</th><th>Baris</th><th class="l">Periode isi</th><th></th></tr>' + files.map(f=>{
+      const rows = f.orders_rows||f.income_rows||f.unsettled_rows||0; const from=f.orders_from||f.income_from||f.unsettled_from||''; const to=f.orders_to||f.income_to||f.unsettled_to||'';
+      return `<tr><td class="l">${f.file}</td><td class="l ${f.kind==='corrupt'||!f.kind?'neg':''}">${f.label}</td><td class="l ${f.match===0?'neg':''}">${f.hint||f.seller||'<span class="muted">—</span>'}</td><td>${fmt(rows)}</td><td class="l">${from} → ${to}</td><td><button class="ghost" onclick="delFile('${f.file.replace(/'/g,"\\'")}')">hapus</button></td></tr>`;
+    }).join('');
+  }catch(e){ tb.innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; }
+}
+async function delFile(name){ if(!confirm('Hapus file '+name+' dari toko?')) return; await api('/api/files?toko='+encodeURIComponent($('#toko').value)+'&name='+encodeURIComponent(name),{method:'DELETE'}); loadFiles(); loadToko(); }
+
+// upload
+const drop=$('#drop');
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');upload(e.dataTransfer.files)});
+$('#fileInput').onchange=e=>upload(e.target.files);
+async function upload(files){
+  const t=$('#upToko').value||$('#toko').value; if(!t) return toast('buat/pilih toko dulu');
+  const fd=new FormData(); fd.append('toko',t); for(const f of files) fd.append('files',f);
+  $('#upResult').textContent='mengunggah '+files.length+' file…';
+  try{ const res=await api('/api/upload',{method:'POST',body:fd});
+    $('#upResult').innerHTML=`<b>Masuk ke toko ${t}:</b><br>`+res.map(r=>`${r.ok?'✅':'⚠️'} ${r.file} — ${r.ok?r.kind:r.msg}`).join('<br>');
+    loadFiles(); loadToko();
+  }catch(e){ $('#upResult').textContent='gagal: '+e.message; }
+}
+
+// scan folder
+$('#btnScan').onclick=async()=>{
+  const tb=$('#tblScan'); tb.innerHTML='<tr><td class="muted">scanning…</td></tr>'; $('#scanInfo').textContent='';
+  try{ const list=await api('/api/scan?path='+encodeURIComponent($('#scanPath').value));
+    if(!list.length){ tb.innerHTML='<tr><td class="muted">tidak ada file export yang dikenali</td></tr>'; return; }
+    const lbl={shopee_orders:'Shopee · Order.all',unknown_income:'Laporan penghasilan (Shopee/TikTok)',tiktok_orders:'TikTok · Semua pesanan',tiktok_unsettled:'TikTok · belum settle (estimasi resmi)'};
+    tb.innerHTML='<tr><th><input type="checkbox" id="chkAll"></th><th class="l">File</th><th class="l">Tebakan jenis</th><th>Ukuran</th><th class="l">Diunduh</th></tr>'+list.map((f,i)=>`<tr><td><input type="checkbox" class="chk" data-p="${encodeURIComponent(f.path)}" ></td><td class="l">${f.file}</td><td class="l">${lbl[f.guess]||f.guess}</td><td>${(f.size/1024).toFixed(0)} KB</td><td class="l">${new Date(f.mtime*1000).toLocaleDateString('id-ID')}</td></tr>`).join('');
+    $('#chkAll').onchange=e=>document.querySelectorAll('.chk:not(:disabled)').forEach(c=>c.checked=e.target.checked);
+    $('#btnImport').disabled=false; $('#scanInfo').textContent=list.length+' file ditemukan';
+  }catch(e){ tb.innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; }
+};
+$('#btnImport').onclick=async()=>{
+  const t=$('#scanToko').value||$('#toko').value; if(!t) return toast('buat/pilih toko dulu');
+  const paths=[...document.querySelectorAll('.chk:checked')].map(c=>decodeURIComponent(c.dataset.p)); if(!paths.length) return toast('centang file dulu');
+  $('#scanInfo').textContent='menyalin & membaca '+paths.length+' file…';
+  try{ const res=await api('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:t,paths})});
+    $('#scanInfo').textContent=res.filter(r=>r.ok).length+' file masuk ke toko '+t+(res.some(r=>!r.ok)?' · '+res.filter(r=>!r.ok).map(r=>r.file+': '+r.msg).join('; '):'');
+    loadFiles(); loadToko();
+  }catch(e){ $('#scanInfo').textContent='gagal: '+e.message; }
+};
+
+// ---------- summary
+$('#btnLoad').onclick=loadSummary;
+$('#btnReset').onclick=()=>{ $('#dfrom').value=''; $('#dto').value=''; $('#mfrom').value=''; $('#mto').value=''; loadSummary(); };
+$('#btnExport').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko'); window.location='/api/export.xlsx?'+qs(); };
+async function loadSummary(){
+  const t=$('#toko').value; if(!t) return toast('pilih toko dulu');
+  const q=qs({platform:$('#platform').value});
+  $('#loadinfo').textContent='menghitung…'; $('#btnLoad').disabled=true;
+  try{ DATA=await api('/api/summary?'+q); render(); $('#loadinfo').textContent=DATA.rows.length+' bulan · '+DATA.files.length+' file'; }
+  catch(e){ toast('gagal: '+e.message); $('#loadinfo').textContent=''; }
+  finally{ $('#btnLoad').disabled=false; }
+}
+
+function mkChart(id, cfg){ if(charts[id]) charts[id].destroy(); charts[id]=new Chart($('#'+id), cfg); }
+const baseOpts = (yfmt)=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',titleColor:'#1E1E1E',bodyColor:'#1E1E1E',borderColor:'#1E1E1E',borderWidth:1,callbacks:{label:c=>' '+c.dataset.label+': '+(yfmt==='pct'?pct(c.raw):fmtRp(c.raw))}}},scales:{x:{grid:{display:false},ticks:{color:'#5B5B6B'}},y:{beginAtZero:true,grid:{color:'#EEE'},border:{display:false},ticks:{color:'#5B5B6B',callback:v=>yfmt==='pct'?v+'%':fmtJt(v)}}}});
+const legend=(el,items)=>$(el).innerHTML=items.map(i=>`<span><i style="background:${i.c}"></i>${i.l}</span>`).join('');
+
+function render(){
+  const R=DATA.rows, T=DATA.totals;
+  if(!R.length){ $('#ringkasEmpty').style.display='block'; $('#ringkasEmpty').textContent='Tidak ada data untuk filter ini.'; $('#ringkasBody').style.display='none'; return; }
+  $('#ringkasEmpty').style.display='none'; $('#ringkasBody').style.display='block';
+  const labels=R.map(r=>monthLabel(r.month));
+  const filt=($('#dfrom').value||$('#dto').value); const allM=DATA.all_months||[];
+  const partial=R.some(r=>r.iklan_prorata!=null&&r.iklan_prorata<100);
+  $('#periodNote').innerHTML=`<b>Periode dihitung:</b> ${labels.join(', ')} ${filt?'<span class="pill warn">FILTER TANGGAL ORDER '+($('#dfrom').value||'…')+' → '+($('#dto').value||'…')+'</span> <span class="small">(data tersedia: '+allM.map(monthLabel).join(', ')+' — klik ✕ filter untuk semua'+(partial?'; iklan bulan parsial diprorata per hari':'')+')</span>':'<span class="pill ok">SEMUA DATA</span>'} · platform: <b>${$('#platform').options[$('#platform').selectedIndex].text}</b>`;
+  // tiles
+  const tiles=[
+    ['Nilai pesanan masuk', fmtRp(T.nilai_masuk), '≈ angka dashboard, '+fmt(T.pesanan_masuk)+' order'],
+    ['Pembatalan', fmtRp(T.nilai_batal), fmt(T.pesanan_batal)+' order · '+pct(T.batal_pct)+' dari masuk'],
+    ['Retur penuh (keluar dari bruto)', fmtRp(T.retur_nilai||0), fmt(T.retur_order||0)+' order dana dikembalikan penuh'],
+    ['Peredaran bruto riil', fmtRp(T.bruto), fmt(T.pesanan_terjual)+' order non-batal non-retur · '+fmt(T.qty_terjual)+' pcs'],
+    ['Potongan marketplace', fmtRp(-T.total_potongan), pct(T.potongan_pct)+' dari bruto settle '+fmtJt(T.bruto_income)+' ('+fmt(T.order_settled)+' order yang sudah ada di lap. penghasilan)'],
+    ['Refund parsial', fmtRp(-T.refund), 'order yang tetap diakui; retur penuh sudah keluar dari bruto'],
+    ['Dana diterima (neto)', fmtRp(T.neto), pct(T.neto_pct)+' dari bruto yang sudah settle'],
+    ['Taksiran dana akan cair', fmtRp(T.est_neto||0), fmt(T.belum_settle_order||0)+' order belum settle · bruto '+fmtJt(T.belum_settle_bruto||0)+(T.est_resmi_order?' · '+fmt(T.est_resmi_order)+' pakai estimasi resmi TikTok':'')],
+    ['Neto proyeksi', fmtRp(T.neto_proyeksi||0), 'dana diterima + taksiran; rasio: '+Object.entries(T.ratio_p||{}).map(([k,v])=>k+' '+v+'%').join(', ')],
+    ['HPP produk terjual', fmtRp(T.hpp||0), (T.hpp_cover_pct||0)<100?'cakupan '+pct(T.hpp_cover_pct)+' qty — sisanya belum dipetakan (tab HPP & Laba)':'cakupan 100% qty'],
+    ['Gross profit (bruto − HPP)', fmtRp(T.gross_profit||0), 'GPM '+pct(T.gpm_pct)+' dari bruto'],
+    ['Laba setelah marketplace', fmtRp(T.laba_mp||0), pct(T.laba_mp_pct)+' dari bruto · neto proyeksi − HPP, sebelum iklan & opex'],
+    ['Biaya iklan', fmtRp(T.iklan||0), 'ACR '+pct(T.acr_pct)+' dari bruto · '+Object.entries(T.iklan_detail||{}).filter(([k,v])=>v).map(([k,v])=>k.replace('Iklan ','')+' '+fmtJt(v)).join(' · ')],
+    ['Laba setelah iklan', fmtRp(T.laba_iklan||0), pct(T.laba_iklan_pct)+' dari bruto · '+((T.gpm_pct||0)>(T.acr_pct||0)?'GPM '+pct(T.gpm_pct)+' > ACR '+pct(T.acr_pct)+' ✓':'GPM '+pct(T.gpm_pct)+' < ACR '+pct(T.acr_pct)+' ✗ rugi iklan')],
+  ];
+  $('#tiles').innerHTML=tiles.map(t=>`<div class="tile"><div class="k">${t[0]}</div><div class="v">${t[1]}</div><div class="s">${t[2]}</div></div>`).join('');
+  const uns=T.belum_settle_bruto||0;
+  $('#noteSettle').innerHTML = uns>0
+    ? `<b>Perhatian cakupan:</b> ${fmt(T.belum_settle_order)} order terjual senilai ${fmtRp(uns)} (${pct(100-T.settle_pct)} dari bruto) <b>belum muncul di laporan penghasilan</b> yang diunggah — angka potongan, refund & neto untuk order itu belum terhitung. Upload laporan penghasilan periode berikutnya untuk melengkapi. Lihat kolom "settle %" di tab Per bulan.`
+    : `Semua order terjual sudah ada di laporan penghasilan — neto lengkap.`;
+  // chart bruto: dashboard vs riil vs neto
+  mkChart('chBruto',{type:'bar',data:{labels,datasets:[
+    {label:'Nilai pesanan masuk (≈dashboard)',data:R.map(r=>r.nilai_masuk),backgroundColor:'#D9D4EA',borderRadius:4,borderSkipped:'bottom'},
+    {label:'Bruto riil (non-batal)',data:R.map(r=>r.bruto),backgroundColor:COL.Shopee,borderRadius:4,borderSkipped:'bottom'},
+    {label:'Dana diterima (neto)',data:R.map(r=>r.neto),backgroundColor:COL.TikTok,borderRadius:4,borderSkipped:'bottom'}]},options:baseOpts()});
+  legend('#lgBruto',[{c:'#D9D4EA',l:'Nilai pesanan masuk (≈dashboard)'},{c:COL.Shopee,l:'Bruto riil (non-batal)'},{c:COL.TikTok,l:'Dana diterima (neto)'}]);
+  // per channel: butuh data per platform → ambil dari by_platform per bulan? gunakan request terpisah ringan: rows hanya ada utk filter aktif; jadi tampilkan via by_platform totals + stacked dari DATA.breakdown.channels per bulan tidak tersedia → kita hitung dari rows jika platform=all tidak bisa. Pakai endpoint per platform:
+  renderChannelChart(labels);
+  mkChart('chBatal',{type:'line',data:{labels,datasets:[{label:'% batal',data:R.map(r=>r.batal_pct),borderColor:COL.Shopee,backgroundColor:COL.Shopee,borderWidth:2,pointRadius:4,tension:.25}]},options:baseOpts('pct')});
+  // fee table
+  const fl=DATA.fee_lines; const totFee=-T.total_potongan||1;
+  $('#tblFee').innerHTML='<tr><th class="l">Jenis potongan</th><th>Rp</th><th>% dari total potongan</th><th>% dari bruto settle</th></tr>'+fl.map(([k,l])=>`<tr><td class="l">${l}</td><td>${fmt(-T[k])}</td><td>${pct(-T[k]/totFee*100)}</td><td>${pct(-T[k]/(T.bruto_income||1)*100)}</td></tr>`).join('')+`<tr class="tot"><td class="l">Total potongan</td><td>${fmt(-T.total_potongan)}</td><td>100%</td><td>${pct(T.potongan_pct)}</td></tr><tr><td class="l">Refund parsial ke pembeli</td><td>${fmt(-T.refund)}</td><td></td><td>${pct(-T.refund/(T.bruto_income||1)*100)}</td></tr>`+(DATA.other_lines||[]).map(([k,l])=>`<tr><td class="l">${l}</td><td>${fmt(T[k])}</td><td></td><td>${pct(T[k]/(T.bruto_income||1)*100)}</td></tr>`).join('')+`<tr class="dim"><td class="l">Bruto settle (basis %)</td><td>${fmt(T.bruto_income)}</td><td></td><td>100%</td></tr>`;
+  // grafik potongan per bulan per jenis (top 5 + lainnya)
+  const FEECOL=['#F4561E','#5E1AF1','#0F766E','#B7791F','#C2185B','#8A8A99'];
+  const ranked=fl.map(([k,l])=>({k,l,v:-T[k]||0})).sort((a,b)=>b.v-a.v);
+  const top=ranked.slice(0,5), rest=ranked.slice(5);
+  const feeDs=top.map((f,i)=>({label:f.l,data:R.map(r=>-r[f.k]||0),backgroundColor:FEECOL[i],borderRadius:2,borderSkipped:'bottom'}));
+  if(rest.length) feeDs.push({label:'Lainnya ('+rest.map(f=>f.l.split(' (')[0]).join(', ')+')',data:R.map(r=>rest.reduce((a,f)=>a+(-r[f.k]||0),0)),backgroundColor:FEECOL[5],borderRadius:2,borderSkipped:'bottom'});
+  mkChart('chFee',{type:'bar',data:{labels,datasets:feeDs},options:Object.assign(baseOpts(),{scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,grid:{color:'#EEE'},border:{display:false},ticks:{callback:v=>fmtJt(v)}}}})});
+  legend('#lgFee',feeDs.map(d=>({c:d.backgroundColor,l:d.label})));
+  // platform table
+  const bp=DATA.by_platform||{}; const names={shopee:'Shopee',tiktok:'TikTok Shop',tokopedia:'Tokopedia'};
+  $('#tblPlat').innerHTML='<tr><th class="l">Platform</th><th>Order masuk</th><th>Batal</th><th>% batal</th><th>Order terjual</th><th>Bruto riil</th><th>Potongan</th><th>Refund</th><th>Neto</th><th>Neto/bruto settle</th><th>Settle %</th></tr>'+Object.keys(bp).map(p=>{const t=bp[p];return `<tr><td class="l"><i class="pill" style="background:${COL[names[p].split(' ')[0]]}22;color:${COL[names[p].split(' ')[0]]}">${names[p]}</i></td><td>${fmt(t.pesanan_masuk)}</td><td>${fmt(t.pesanan_batal)}</td><td>${pct(t.batal_pct)}</td><td>${fmt(t.pesanan_terjual)}</td><td>${fmt(t.bruto)}</td><td>${fmt(-t.total_potongan)}</td><td>${fmt(-t.refund)}</td><td>${fmt(t.neto)}</td><td>${pct(t.neto_pct)}</td><td>${pct(t.settle_pct)}</td></tr>`}).join('');
+  const US=DATA.unsettled_status||[];
+  $('#tblUns').innerHTML='<tr><th class="l">Platform</th><th class="l">Status pesanan</th><th>Order</th><th>Bruto belum cair</th><th>Taksiran dana cair</th><th>Order tertua</th></tr>'+(US.length?US.map(u=>`<tr><td class="l">${u.platform}</td><td class="l">${u.status} ${u.risk?'<span class="pill warn">berisiko</span>':''}</td><td>${fmt(u.order)}</td><td>${fmt(u.bruto)}</td><td>${fmt(u.est)}</td><td>${u.tertua||''}</td></tr>`).join('')+`<tr class="tot"><td class="l" colspan="2">Total</td><td>${fmt(US.reduce((a,u)=>a+u.order,0))}</td><td>${fmt(US.reduce((a,u)=>a+u.bruto,0))}</td><td>${fmt(US.reduce((a,u)=>a+u.est,0))}</td><td></td></tr>`:'<tr><td class="muted">semua order terjual sudah cair</td></tr>');
+  renderBulan(); renderProduk(); renderDetail();
+}
+
+async function renderChannelChart(labels){
+  const base=qs();
+  const months=DATA.rows.map(r=>r.month); const ds=[];
+  for(const [p,name] of [['shopee','Shopee'],['tiktok','TikTok'],['tokopedia','Tokopedia']]){
+    if(!DATA.by_platform||!DATA.by_platform[p]) continue;
+    const q=new URLSearchParams(base); q.set('platform',p);
+    const r=await api('/api/summary?'+q); const m=Object.fromEntries(r.rows.map(x=>[x.month,x.bruto]));
+    ds.push({label:name,data:months.map(x=>m[x]||0),backgroundColor:COL[name],borderRadius:4,borderSkipped:'bottom'});
+  }
+  mkChart('chChannel',{type:'bar',data:{labels,datasets:ds},options:Object.assign(baseOpts(),{scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,grid:{color:'#EEE'},border:{display:false},ticks:{callback:v=>fmtJt(v)}}}})});
+  legend('#lgChannel',ds.map(d=>({c:d.backgroundColor,l:d.label})));
+}
+
+function renderBulan(){
+  const R=DATA.rows,T=DATA.totals; const th='<tr><th class="l">Keterangan</th>'+R.map(r=>`<th>${monthLabel(r.month)}</th>`).join('')+'<th>TOTAL</th></tr>';
+  const line=(label,key,opt={})=>{ const v=r=>opt.neg?-r[key]:r[key]; const f=opt.pct?pct:fmt; return `<tr class="${opt.cls||''}"><td class="l">${label}</td>${R.map(r=>`<td>${f(v(r))}</td>`).join('')}<td>${opt.pct?pct(T[key]):fmt(opt.neg?-T[key]:T[key])}</td></tr>`; };
+  const sec=label=>`<tr class="sec"><td class="l" colspan="${R.length+2}">${label}</td></tr>`;
+  let h=th;
+  h+=sec('PESANAN (dari file pesanan, per bulan order)');
+  h+=line('Pesanan masuk (jumlah order, incl. batal)','pesanan_masuk');
+  h+=line('Nilai pesanan masuk (≈ dashboard)','nilai_masuk');
+  h+=line('Pembatalan (jumlah order)','pesanan_batal');
+  h+=line('Pembatalan (nilai)','nilai_batal');
+  h+=line('% batal','batal_pct',{pct:1,cls:'dim'});
+  h+=line('Retur penuh — dana dikembalikan, keluar dari bruto (jumlah order)','retur_order');
+  h+=line('Retur penuh (nilai)','retur_nilai');
+  h+=line('Belum bayar (tidak dihitung)','belum_bayar',{cls:'dim'});
+  h+=line('Pesanan terjual (non-batal, non-retur)','pesanan_terjual');
+  h+=line('Qty terjual (pcs)','qty_terjual');
+  h+=line('PENJUALAN — PEREDARAN BRUTO','bruto',{cls:'tot'});
+  h+=sec('POTONGAN MARKETPLACE (dari laporan penghasilan, dipasangkan ke order)');
+  for(const [k,l] of DATA.fee_lines) h+=line(l,k,{neg:1,cls:'sub'});
+  h+=line('TOTAL potongan marketplace','total_potongan',{neg:1,cls:'tot'});
+  h+=line('Refund ke pembeli (parsial, order yang tetap diakui)','refund',{neg:1});
+  h+=line('Refund order retur penuh (info, order sudah keluar dari bruto)','refund_retur',{neg:1,cls:'dim'});
+  for(const [k,l] of (DATA.other_lines||[])) h+=line(l+' (+/−)',k,{cls:'sub'});
+  h+=line('DANA DITERIMA (NETO)','neto',{cls:'tot'});
+  h+=sec('CAKUPAN LAPORAN PENGHASILAN');
+  h+=line('Bruto yang sudah settle (harga produk di lap. penghasilan)','bruto_income',{cls:'dim'});
+  h+=line('Order terjual belum muncul di lap. penghasilan','belum_settle_order',{cls:'dim'});
+  h+=line('Nilai bruto belum settle','belum_settle_bruto',{cls:'dim'});
+  h+=line('Settle %','settle_pct',{pct:1,cls:'dim'});
+  h+=sec('PROYEKSI (taksiran dana order yang belum cair)');
+  h+=line('Taksiran dana akan cair dari order belum settle','est_neto');
+  h+=line('NETO PROYEKSI (dana diterima + taksiran)','neto_proyeksi',{cls:'tot'});
+  h+=sec('HPP & LABA (HPP dari master toko; hanya qty yang punya HPP)');
+  h+=line('HPP produk terjual','hpp');
+  h+=line('GROSS PROFIT (bruto − HPP)','gross_profit',{cls:'tot'});
+  h+=line('GPM % (gross profit / bruto)','gpm_pct',{pct:1,cls:'dim'});
+  h+=line('LABA SETELAH MARKETPLACE (neto proyeksi − HPP)','laba_mp',{cls:'tot'});
+  h+=line('Laba setelah marketplace % dari bruto','laba_mp_pct',{pct:1,cls:'dim'});
+  h+=line('Cakupan HPP (% qty terjual yang punya HPP)','hpp_cover_pct',{pct:1,cls:'dim'});
+  h+=sec('IKLAN (input manual di tab Iklan; atribusi channel → platform)');
+  const chans=[...new Set(R.flatMap(r=>Object.keys(r.iklan_detail||{})))];
+  for(const c of chans) h+=`<tr class="sub"><td class="l">${c}</td>${R.map(r=>`<td>${fmt((r.iklan_detail||{})[c]||0)}</td>`).join('')}<td>${fmt((T.iklan_detail||{})[c]||0)}</td></tr>`;
+  h+=line('TOTAL BIAYA IKLAN'+(R.some(r=>r.iklan_prorata!=null&&r.iklan_prorata<100)?' (diprorata: '+R.map(r=>r.iklan_prorata!=null?r.iklan_prorata+'%':'').filter(Boolean).join(', ')+' hari)':''),'iklan',{cls:'tot'});
+  h+=line('ACR % (iklan / bruto)','acr_pct',{pct:1,cls:'dim'});
+  h+=line('LABA SETELAH IKLAN (laba setelah marketplace − iklan)','laba_iklan',{cls:'tot'});
+  h+=line('Laba setelah iklan % dari bruto','laba_iklan_pct',{pct:1,cls:'dim'});
+  h+=`<tr class="dim"><td class="l">Dasar taksiran</td>${R.map(r=>`<td class="small" style="white-space:normal">${r.est_basis||'–'}</td>`).join('')}<td></td></tr>`;
+  h+=line('Potongan % dari bruto settle','potongan_pct',{pct:1,cls:'dim'});
+  h+=line('Neto % dari bruto settle','neto_pct',{pct:1,cls:'dim'});
+  $('#tblBulan').innerHTML=h;
+  const noOrders=R.filter(r=>!r.pesanan_masuk&&r.order_settled).map(r=>monthLabel(r.month));
+  $('#bulanNote').textContent = noOrders.length ? 'Bulan tanpa file pesanan tapi ada di laporan penghasilan (angka pesanan 0, hanya potongan/neto): '+noOrders.join(', ')+'. Upload file pesanan bulan itu supaya lengkap.' : '';
+}
+function renderProduk(){
+  const P=DATA.breakdown.products, PT=DATA.breakdown.products_total||{};
+  const totRow=PT.n?`<tr class="tot"><td class="l">TOTAL semua produk (${fmt(PT.n)} listing)</td><td class="l small">${PT.qty_hpp<PT.qty?'HPP '+pct(100*PT.qty_hpp/PT.qty)+' qty':'HPP lengkap'}</td><td>${fmt(PT.order)}</td><td>${fmt(PT.qty)}</td><td>${fmt(PT.bruto)}</td><td>${fmt(PT.avg)}</td><td>${fmt(PT.hpp)}</td><td>${fmt(PT.gross_profit)}</td><td>${pct(PT.gpm_pct)}</td><td>${pct(PT.batal_pct)}</td><td>${fmt(PT.nilai_batal)}</td></tr>`:'';
+  const V=DATA.breakdown.variants||{};
+  $('#tblProduk').innerHTML='<tr><th class="l">Produk</th><th class="l">Item HPP</th><th>Order terjual</th><th>Qty</th><th>Bruto</th><th>Rata-rata/pcs</th><th>HPP</th><th>Gross profit</th><th>GPM</th><th>% batal</th><th>Nilai batal</th></tr>'+totRow+P.map((p,i)=>{
+    const vs=V[p.product]||[]; const has=vs.length>1||(vs.length===1&&vs[0].variation!=='(tanpa varian)');
+    const q=(p.product+' '+(p.hpp_item||'')+' '+vs.map(v=>v.variation).join(' ')).toLowerCase();
+    return `<tr class="prow" data-i="${i}" data-q="${q.replace(/"/g,'&quot;')}"><td class="l">${has?`<a href="#" class="vtog" data-i="${i}" style="text-decoration:none;color:var(--purple);font-weight:700">▸</a> `:''}${p.product}${has?' <span class="muted small">('+vs.length+' varian)</span>':''}</td><td class="l small">${p.hpp_item||'<span class="pill warn">belum dipetakan</span>'}</td><td>${fmt(p.order)}</td><td>${fmt(p.qty)}</td><td>${fmt(p.bruto)}</td><td>${fmt(p.avg)}</td><td>${fmt(p.hpp)}</td><td>${fmt(p.gross_profit)}</td><td>${p.hpp_item?pct(p.gpm_pct):'–'}</td><td>${pct(p.batal_pct)}</td><td>${fmt(p.nilai_batal)}</td></tr>`+
+      (has?vs.map(v=>`<tr class="vrow sub dim" data-i="${i}" style="display:none"><td class="l">↳ ${v.variation}</td><td></td><td>${fmt(v.order)}</td><td>${fmt(v.qty)}</td><td>${fmt(v.bruto)}</td><td>${fmt(v.avg)}</td><td>${fmt(v.hpp)}</td><td>${fmt(v.gross_profit)}</td><td>${p.hpp_item?pct(v.gpm_pct):'–'}</td><td>${pct(v.batal_pct)}</td><td>${fmt(v.nilai_batal)}</td></tr>`).join(''):'');
+  }).join('');
+  document.querySelectorAll('.vtog').forEach(a=>a.onclick=e=>{ e.preventDefault(); const i=a.dataset.i; const rows=document.querySelectorAll(`.vrow[data-i="${i}"]`); const open=rows[0].style.display==='none'; rows.forEach(r=>r.style.display=open?'':'none'); a.textContent=open?'▾':'▸'; });
+  prodFilter();
+}
+function renderDetail(){
+  const B=DATA.breakdown;
+  $('#tblStatus').innerHTML='<tr><th class="l">Status</th><th>Order</th><th>Nilai</th></tr>'+B.status.map(s=>`<tr><td class="l">${s.status}</td><td>${fmt(s.order)}</td><td>${fmt(s.nilai)}</td></tr>`).join('');
+  $('#tblCancel').innerHTML='<tr><th class="l">Alasan</th><th>Order</th><th>Nilai</th></tr>'+(B.cancel_reasons.length?B.cancel_reasons.map(s=>`<tr><td class="l">${s.cancel_reason}</td><td>${fmt(s.order)}</td><td>${fmt(s.nilai)}</td></tr>`).join(''):'<tr><td class="muted">tidak ada alasan tercatat</td></tr>');
+  $('#tblPay').innerHTML='<tr><th class="l">Metode bayar</th><th>Order masuk</th><th>Batal</th><th>% batal</th></tr>'+B.payment.map(s=>`<tr><td class="l">${s.payment||'(kosong)'}</td><td>${fmt(s.masuk)}</td><td>${fmt(s.batal)}</td><td><span class="pill ${s.batal_pct>30?'bad':s.batal_pct>15?'warn':'ok'}">${pct(s.batal_pct)}</span></td></tr>`).join('');
+  const A=DATA.adjustments||[];
+  $('#tblAdj').innerHTML='<tr><th class="l">Bulan cair</th><th class="l">Jenis</th><th>Jumlah</th><th>Rp</th></tr>'+(A.length?A.map(a=>`<tr><td class="l">${monthLabel(a.month)}</td><td class="l">${a.type}</td><td>${fmt(a.n)}</td><td class="${a.jumlah<0?'neg':''}">${fmt(a.jumlah)}</td></tr>`).join(''):'<tr><td class="muted">tidak ada</td></tr>');
+  const rc=DATA.reconcile;
+  $('#recon').innerHTML = rc.matched ? `<span class="pill ${rc.exact===rc.matched?'ok':'warn'}">${fmt(rc.exact)} / ${fmt(rc.matched)} order cocok persis</span>`+(rc.mismatch.length?'<div class="tblwrap" style="margin-top:8px;max-height:260px"><table><tr><th class="l">Order</th><th>Bruto (pesanan)</th><th>Harga produk (penghasilan)</th><th>Selisih</th></tr>'+rc.mismatch.map(m=>`<tr><td class="l">${m.order_id}</td><td>${fmt(m.orders)}</td><td>${fmt(m.income)}</td><td class="neg">${fmt(m.diff)}</td></tr>`).join('')+'</table></div>':'') : '<span class="muted">belum ada order yang ada di kedua file</span>';
+}
+
+
+// ---------- audit
+function syncMonthFromDate(){ $('#mfrom').value=($('#dfrom').value||'').slice(0,7); $('#mto').value=($('#dto').value||'').slice(0,7); }
+function qs(extra){ syncMonthFromDate(); const t=$('#toko').value; const q=new URLSearchParams({toko:t}); if($('#dfrom').value) q.set('d_from',$('#dfrom').value); if($('#dto').value) q.set('d_to',$('#dto').value); for(const k in (extra||{})) q.set(k,extra[k]); return q; }
+const sevPill = s => `<span class="pill ${s==='bad'?'bad':s==='warn'?'warn':s==='info'?'info':'ok'}">${{bad:'PERLU DICEK',warn:'PERHATIAN',info:'INFO',ok:'OK'}[s]||s}</span>`;
+function prodFilter(){
+  const q=($('#prodSearch').value||'').trim().toLowerCase(); const prows=[...document.querySelectorAll('.prow')]; let shown=0;
+  prows.forEach(r=>{ const hit=!q||r.dataset.q.includes(q); r.style.display=hit?'':'none'; if(hit) shown++;
+    const vr=document.querySelectorAll(`.vrow[data-i="${r.dataset.i}"]`); const tog=r.querySelector('.vtog');
+    if(!hit){ vr.forEach(v=>v.style.display='none'); return; }
+    if(q && vr.length && !r.dataset.q.split(' ').slice(0,1).includes(q)){ // kalau yang cocok nama varian, buka otomatis
+      const varHit=[...vr].some(v=>v.textContent.toLowerCase().includes(q)) && !(r.children[0].textContent.toLowerCase().includes(q));
+      if(varHit){ vr.forEach(v=>v.style.display=v.textContent.toLowerCase().includes(q)?'':'none'); if(tog) tog.textContent='▾'; }
+    }
+  });
+  $('#prodSearchInfo').textContent=q?`${shown} produk cocok dengan "${q}"`:'';
+  $('#btnVarAll').textContent='▾ buka semua varian';
+}
+$('#prodSearch').addEventListener('input', prodFilter);
+$('#btnVarAll').onclick=()=>{
+  // hanya varian dari produk yang sedang tampil (lolos pencarian)
+  const visible=[...document.querySelectorAll('.prow')].filter(r=>r.style.display!=='none');
+  const vrows=visible.flatMap(r=>[...document.querySelectorAll(`.vrow[data-i="${r.dataset.i}"]`)]);
+  const open=vrows.some(r=>r.style.display==='none');
+  vrows.forEach(r=>r.style.display=open?'':'none');
+  visible.forEach(r=>{ const a=r.querySelector('.vtog'); if(a) a.textContent=open?'▾':'▸'; });
+  $('#btnVarAll').textContent=open?'▸ tutup semua varian':'▾ buka semua varian';
+};
+$('#btnProdukX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko'); window.location='/api/produk.xlsx?'+qs({platform:$('#platform').value}); };
+$('#btnAuditX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko'); window.location='/api/audit.xlsx?'+qs(); };
+$('#btnAudit').onclick=async()=>{
+  if(!$('#toko').value) return toast('pilih toko dulu');
+  $('#auditSum').innerHTML='<span class="small">mengaudit…</span>'; $('#btnAudit').disabled=true;
+  try{ const A=await api('/api/audit?'+qs()); renderAudit(A); }catch(e){ toast('gagal: '+e.message); $('#auditSum').innerHTML=''; }
+  finally{ $('#btnAudit').disabled=false; }
+};
+function renderAudit(A){
+  $('#auditBody').style.display='block';
+  const S=A.summary; const covBad=A.coverage.filter(c=>c.status==='bad').length, covWarn=A.coverage.filter(c=>c.status==='warn').length;
+  const recBad=A.reconcile.filter(r=>!r.ok).length;
+  $('#auditSum').innerHTML=`${sevPill(S.bad||recBad||covBad?'bad':(S.warn||covWarn)?'warn':'ok')} <span class="small">temuan perlu dicek: <b>${S.bad}</b> · perhatian: <b>${S.warn}</b> · info: <b>${S.info}</b> · bersih: <b>${S.ok}</b> &nbsp;|&nbsp; kelengkapan bermasalah: <b>${covBad}</b> bulan (+${covWarn} perhatian) &nbsp;|&nbsp; file tidak rekonsil: <b>${recBad}</b></span>`;
+  // coverage
+  $('#tblCov').innerHTML='<tr><th class="l">Platform</th><th class="l">Bulan</th><th>Order</th><th>Hari ada order</th><th class="l">Hari kosong</th><th>Order di lap. penghasilan</th><th>Settle %</th><th class="l">Status</th><th class="l">Catatan</th></tr>'+A.coverage.map(c=>`<tr><td class="l">${c.platform}</td><td class="l">${monthLabel(c.month)}</td><td>${fmt(c.orders)}</td><td>${c.days_with}/${c.days_total}</td><td class="l small">${c.missing_days.length? (c.missing_days.length>10? c.missing_days.length+' hari' : c.missing_days.join(', ')) : '–'}</td><td>${fmt(c.income_orders)}</td><td>${c.settle_pct==null?'–':pct(c.settle_pct)}</td><td class="l">${sevPill(c.status)}</td><td class="l small">${c.note}</td></tr>`).join('');
+  // reconcile
+  $('#recon2').innerHTML = A.reconcile.length ? A.reconcile.map(r=>`<details class="f" ${r.ok?'':'open'}><summary>${sevPill(r.ok?'ok':'bad')} ${r.file} <span class="small">· ${r.label}${r.seller?' · '+r.seller:''} · ${r.n_items} item, ${r.n_bad} selisih</span></summary><div class="tblwrap" style="margin-top:8px;max-height:260px"><table><tr><th class="l">Item</th><th>Resmi (ringkasan platform)</th><th>Hasil baca app</th><th>Selisih</th></tr>${r.items.map(i=>`<tr class="${i.ok?'':'neg'}"><td class="l">${i.label}</td><td>${fmt(i.official)}</td><td>${fmt(i.parsed)}</td><td>${i.ok?'0':fmt(i.diff)}</td></tr>`).join('')}</table></div>${r.ok?'':'<div class="d">Selisih kecil (&lt;0,1%) biasanya = order yang masuk ringkasan resmi tapi tidak ada di rincian per order (inkonsistensi export platform). Selisih besar = ada baris yang tidak terbaca → laporkan.</div>'}</details>`).join('') : '<span class="muted">belum ada file laporan penghasilan</span>';
+  // findings
+  $('#findings').innerHTML = A.findings.map(f=>{
+    const head=`${sevPill(f.severity)} ${f.title} <span class="small">· ${fmt(f.count)} ${f.count===1?'order':'baris'}${f.amount!=null?' · '+fmtRp(f.amount):''}</span>`;
+    if(!f.count) return `<details class="f"><summary>${head}</summary><div class="d">${f.desc||'Tidak ada.'}</div></details>`;
+    let extra='';
+    if(f.extra&&f.extra.transitions) extra='<div class="tblwrap" style="max-height:200px;margin-bottom:8px"><table><tr><th class="l">Dari</th><th class="l">Ke</th><th>Baris</th></tr>'+f.extra.transitions.map(t=>`<tr><td class="l">${t.dari}</td><td class="l">${t.ke}</td><td>${fmt(t.n)}</td></tr>`).join('')+'</table></div>';
+    const tbl='<div class="tblwrap" style="max-height:320px"><table><tr>'+f.cols.map(c=>`<th class="${['order_id','platform','status','product','file','dari','ke','file_lama','file_baru','created','month'].includes(c)?'l':''}">${c}</th>`).join('')+'</tr>'+f.rows.map(r=>'<tr>'+f.cols.map(c=>`<td class="${typeof r[c]==='number'?'':'l'}">${typeof r[c]==='number'?fmt(r[c]):(r[c]??'')}</td>`).join('')+'</tr>').join('')+'</table></div>';
+    return `<details class="f"><summary>${head}</summary><div class="d">${f.desc}${f.note?'<br><b>Catatan:</b> '+f.note:''}</div>${extra}${tbl}</details>`;
+  }).join('');
+}
+$('#btnTrace').onclick=async()=>{
+  const id=$('#traceId').value.trim(); if(!id) return; if(!$('#toko').value) return toast('pilih toko');
+  $('#traceOut').innerHTML='<span class="small">mencari…</span>';
+  try{ const T=await api('/api/trace?'+qs({order_id:id})); renderTrace(T);}catch(e){ $('#traceOut').innerHTML='<span class="neg">'+e.message+'</span>'; }
+};
+$('#traceId').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#btnTrace').click(); });
+function renderTrace(T){
+  if(!T.found){ $('#traceOut').innerHTML='<span class="muted">Order tidak ditemukan di file mana pun di toko ini.</span>'; return; }
+  const tbl=(rows,title)=>{ if(!rows||!rows.length) return `<div class="small muted" style="margin:6px 0">${title}: tidak ada</div>`; const cols=Object.keys(rows[0]); return `<div class="small" style="margin:8px 0 4px"><b>${title}</b></div><div class="tblwrap" style="max-height:240px"><table><tr>${cols.map(c=>`<th class="l">${c}</th>`).join('')}</tr>${rows.map(r=>'<tr>'+cols.map(c=>`<td class="${typeof r[c]==='number'?'':'l'}">${typeof r[c]==='number'?fmt(r[c]):(r[c]??'')}</td>`).join('')+'</tr>').join('')}</table></div>`; };
+  let h='';
+  if(T.final){ const f=T.final; h+=`<div class="note"><b>Cara dihitung:</b> ${f.platform}${f.channel!==f.platform?' / '+f.channel:''} · bulan order <b>${monthLabel(f.month)}</b> · status terakhir <b>${f.status}</b> → ${f.is_unpaid?'<b>belum bayar → tidak dihitung</b>':f.is_batal?'<b>BATAL → tidak masuk bruto</b> (nilai batal '+fmtRp(f.nilai_batal)+')':f.is_retur?'<b>RETUR PENUH (dana dikembalikan) → dikeluarkan dari bruto</b> (nilai '+fmtRp(f.nilai_retur)+')':'<b>terjual → bruto '+fmtRp(f.bruto)+'</b>, '+fmt(f.qty)+' pcs'}${T.income_final?` · laporan penghasilan: harga produk ${fmtRp(T.income_final.harga_produk)}, refund ${fmtRp(-T.income_final.refund)}, <b>neto ${fmtRp(T.income_final.neto)}</b> (${T.income_final.n} baris)`:' · <b>belum ada di laporan penghasilan</b>'}</div>`; }
+  else h+='<div class="note">Order ada di laporan penghasilan tapi <b>tidak ada di file pesanan</b> — status & bruto tidak diketahui.</div>';
+  h+=tbl(T.raw_orders,'Baris di file pesanan (semua file, urut lama → baru; yang dipakai = file terbaru)');
+  h+=tbl(T.raw_income,'Baris di laporan penghasilan');
+  h+=tbl(T.adjustments,'Penyesuaian non-order terkait');
+  $('#traceOut').innerHTML=h;
+}
+
+
+// ---------- HPP
+let HPP=null;
+async function loadHpp(){
+  const t=$('#toko').value; if(!t) return;
+  $('#hppInfo').textContent='memuat…';
+  try{ HPP=await api('/api/hpp?toko='+encodeURIComponent(t)); renderHpp(); }catch(e){ $('#hppInfo').textContent='gagal: '+e.message; }
+}
+function renderHpp(){
+  const M=HPP.master, items=M.items||[]; $('#hppCol').value=M.col||'hpp';
+  $('#hppInfo').innerHTML = items.length ? `<b>${items.length} item</b> · sumber: ${M.source||'–'} · diperbarui ${M.updated||'–'}` : 'Belum ada master HPP untuk toko ini.';
+  if(M.source&&M.source.startsWith('http')&&!$('#hppUrl').value) $('#hppUrl').value=M.source;
+  $('#tblHppItems').innerHTML='<tr><th class="l">Nama produk (sheet)</th><th class="l">Kode</th><th>HPP</th><th>Pembulatan</th><th>Harga jual</th><th>GPM @harga jual</th></tr>'+items.map(i=>`<tr><td class="l">${i.name}${i.manual?' <span class="pill info">manual</span> <a href="#" class="small" onclick="hppDel(\''+i.name.replace(/'/g,"\\'")+'\');return false">hapus</a>':''}</td><td>${fmt(i.hpp)}</td><td>${i.pembulatan!=null?fmt(i.pembulatan):'–'}</td><td>${i.harga_jual!=null?fmt(i.harga_jual):'–'}</td><td>${i.harga_jual?pct((i.harga_jual-(M.col==='pembulatan'&&i.pembulatan!=null?i.pembulatan:i.hpp))/i.harga_jual*100):'–'}</td></tr>`).join('');
+  // kolom kode (sisip setelah nama)
+  document.querySelectorAll('#tblHppItems tr').forEach((tr,i)=>{ if(i===0) return; const td=document.createElement('td'); td.className='l small'; td.textContent=(items[i-1]||{}).kode||''; tr.insertBefore(td, tr.children[1]); });
+  const T=HPP.table||[]; const un=T.filter(r=>!r.item&&r.source!=='skip'); const qtyAll=T.reduce((a,r)=>a+r.qty,0), qtyUn=un.reduce((a,r)=>a+r.qty,0);
+  $('#hppMapInfo').innerHTML=`${T.length} listing/SKU · <b>${un.length} belum terpetakan</b> (${fmt(qtyUn)} dari ${fmt(qtyAll)} pcs terjual) · via kode SKU: ${T.filter(r=>r.source==='kode'||r.source==='bundle').length} · nama: ${T.filter(r=>r.source==='auto').length} · manual: ${T.filter(r=>r.source==='manual').length}`;
+  const opts=sel=>'<option value="__auto">(otomatis)</option><option value="">— tanpa HPP —</option>'+items.map(i=>`<option value="${i.name.replace(/"/g,'&quot;')}" ${sel===i.name?'selected':''}>${i.name}</option>`).join('');
+  const srcPill=r=>r.source==='kode'?'<span class="pill ok">kode SKU</span>':r.source==='bundle'?'<span class="pill ok">bundle (jumlah kode)</span>':r.source==='manual'?'<span class="pill info">manual</span>':r.source==='auto'?'<span class="pill ok">nama</span>':r.source==='skip'?'<span class="pill">tanpa HPP</span>':'<span class="pill bad">belum</span>';
+  $('#tblHppMap').innerHTML='<tr><th class="l">Listing marketplace</th><th class="l">SKU · variasi</th><th>Qty terjual</th><th>Bruto</th><th class="l">Item HPP</th><th>HPP/pcs</th><th class="l">Sumber</th></tr>'+T.map((r,i)=>`<tr><td class="l" style="max-width:340px">${r.product}</td><td class="l small">${r.sku||'<span class="muted">(kosong)</span>'}${r.variation?'<br><span class="muted">'+r.variation+'</span>':''}</td><td>${fmt(r.qty)}</td><td>${fmt(r.bruto)}</td><td class="l">${(r.source==='kode'||r.source==='bundle')?'<span class="small">'+r.item+'</span>':`<select data-p="${encodeURIComponent(r.product)}" data-s="${encodeURIComponent(r.sku||'')}" class="hppsel" style="min-width:220px">${opts(r.item)}</select>`}</td><td>${r.hpp!=null?fmt(r.hpp):'<span class="pill warn">–</span>'}</td><td class="l">${srcPill(r)}</td></tr>`).join('');
+  document.querySelectorAll('.hppsel').forEach(sel=>{ if(sel.value==='__auto'){ const p=decodeURIComponent(sel.dataset.p), sk=decodeURIComponent(sel.dataset.s); const row=T.find(r=>r.product===p&&(r.sku||'')===sk); if(row&&row.source==='manual') sel.value=row.item||''; else if(row&&row.source==='skip') sel.value=''; }
+    sel.onchange=async()=>{ const p=decodeURIComponent(sel.dataset.p), sk=decodeURIComponent(sel.dataset.s); const v=sel.value; const body={toko:$('#toko').value,product:p,sku:sk,item:v==='__auto'?null:v}; await api('/api/hpp/map',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast('pemetaan disimpan — klik Hitung untuk update laporan'); loadHpp(); }; });
+}
+$('#btnHppImport').onclick=async()=>{ const t=$('#toko').value; if(!t) return toast('pilih toko'); const url=$('#hppUrl').value.trim(); if(!url) return toast('isi link sheet'); $('#hppInfo').textContent='mengunduh sheet…'; try{ const r=await api('/api/hpp/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:t,url})}); toast(r.n+' item HPP diimpor'); loadHpp(); }catch(e){ $('#hppInfo').textContent='gagal: '+e.message; } };
+$('#hppFile').onchange=async e=>{ const t=$('#toko').value; if(!t) return toast('pilih toko'); const fd=new FormData(); fd.append('toko',t); fd.append('file',e.target.files[0]); try{ const r=await api('/api/hpp/upload',{method:'POST',body:fd}); toast(r.n+' item HPP diimpor'); loadHpp(); }catch(err){ $('#hppInfo').textContent='gagal: '+err.message; } };
+$('#btnHppAdd').onclick=async()=>{ const t=$('#toko').value; if(!t) return toast('pilih toko'); const name=$('#hppNewName').value.trim(), kode=$('#hppNewKode').value.trim(), v=parseFloat(($('#hppNewVal').value||'').replace(/\./g,'').replace(',','.')); if(!name||isNaN(v)) return toast('isi nama & HPP'); await api('/api/hpp/item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:t,name,hpp:v,kode})}); $('#hppNewName').value=''; $('#hppNewVal').value=''; $('#hppNewKode').value=''; toast('item ditambah — petakan listing-nya lalu klik Hitung'); loadHpp(); };
+async function hppDel(name){ if(!confirm('Hapus item manual '+name+'?')) return; await api('/api/hpp/item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:$('#toko').value,name,remove:true})}); loadHpp(); }
+$('#hppCol').onchange=async()=>{ await api('/api/hpp/col',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:$('#toko').value,col:$('#hppCol').value})}); toast('kolom HPP diubah — klik Hitung'); loadHpp(); };
+
+
+// ---------- Iklan
+let ADS=null;
+const monthName=m=>{ if(!m) return ''; const [y,mm]=m.split('-'); return ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'][+mm-1]+' '+y; };
+async function loadAds(){ const t=$('#toko').value; if(!t) return; $('#adsInfo').textContent='memuat…'; try{ ADS=await api('/api/ads?toko='+encodeURIComponent(t)); renderAds(); }catch(e){ $('#adsInfo').textContent='gagal: '+e.message; } }
+function adsMonths(){ const ms=new Set([...(ADS.data_months||[]),...Object.keys(ADS.months||{})]); return [...ms].sort(); }
+function renderAds(){
+  const ch=ADS.channels, months=adsMonths(); $('#adsNotes').value=ADS.notes||''; $('#adsProrate').checked=!!ADS.prorate;
+  const attrSel=c=>`<select class="adsattr" data-c="${encodeURIComponent(c)}"><option value="shopee" ${ADS.attribution[c]==='shopee'?'selected':''}>→ Shopee</option><option value="tiktok" ${ADS.attribution[c]==='tiktok'?'selected':''}>→ TikTok/Tokped</option><option value="all" ${(ADS.attribution[c]||'all')==='all'?'selected':''}>→ Semua</option></select>`;
+  let h='<tr><th class="l">Bulan</th>'+ch.map(c=>`<th><span contenteditable="true" class="adschan" data-c="${encodeURIComponent(c)}" title="klik untuk ganti nama">${c}</span></th>`).join('')+'<th>Total</th><th></th></tr>';
+  h+='<tr class="dim"><td class="l">Atribusi ke platform</td>'+ch.map(c=>`<td>${attrSel(c)}</td>`).join('')+'<td></td><td></td></tr>';
+  for(const m of months){ const row=ADS.months[m]||{}; const tot=ch.reduce((a,c)=>a+(+row[c]||0),0);
+    h+=`<tr><td class="l">${monthName(m)} <span class="muted small">${m}</span>${(ADS.data_months||[]).includes(m)?'':' <span class="pill">tanpa data penjualan</span>'}</td>`+ch.map(c=>`<td><input type="text" class="adscell" data-m="${m}" data-c="${encodeURIComponent(c)}" value="${row[c]?fmt(row[c]):''}" style="min-width:120px;text-align:right;border:1px solid var(--line);padding:5px 6px;border-radius:5px"></td>`).join('')+`<td id="adstot-${m}"><b>${fmt(tot)}</b></td><td><button class="ghost" onclick="adsDelMonth('${m}')">✕</button></td></tr>`; }
+  $('#tblAds').innerHTML=h;
+  document.querySelectorAll('.adscell').forEach(i=>{ i.onchange=()=>{ const m=i.dataset.m,c=decodeURIComponent(i.dataset.c); ADS.months[m]=ADS.months[m]||{}; const v=parseFloat((i.value||'0').replace(/\./g,'').replace(/,/g,'.'))||0; ADS.months[m][c]=v; i.value=v?fmt(v):''; const tot=ADS.channels.reduce((a,cc)=>a+(+ADS.months[m][cc]||0),0); $('#adstot-'+CSS.escape(m)).innerHTML='<b>'+fmt(tot)+'</b>'; $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }; });
+  document.querySelectorAll('.adsattr').forEach(s2=>{ s2.onchange=()=>{ ADS.attribution[decodeURIComponent(s2.dataset.c)]=s2.value; $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }; });
+  document.querySelectorAll('.adschan').forEach(sp=>{ sp.onblur=()=>{ const old=decodeURIComponent(sp.dataset.c), nw=sp.textContent.trim(); if(!nw||nw===old) { sp.textContent=old; return; } ADS.channels=ADS.channels.map(c=>c===old?nw:c); ADS.attribution[nw]=ADS.attribution[old]; delete ADS.attribution[old]; for(const m in ADS.months){ if(old in ADS.months[m]){ ADS.months[m][nw]=ADS.months[m][old]; delete ADS.months[m][old]; } } renderAds(); $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }; });
+  if(!$('#adsInfo').innerHTML.includes('belum')) $('#adsInfo').innerHTML=`${months.length} bulan · ${ch.length} channel · tersimpan di data/${$('#toko').value}/ads.json`;
+}
+function adsDelMonth(m){ if(!confirm('Kosongkan angka iklan '+monthName(m)+'?')) return; delete ADS.months[m]; renderAds(); $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }
+$('#btnAdsAddMonth').onclick=()=>{ const m=prompt('Bulan (format YYYY-MM), mis. 2026-10'); if(!m||!/^\d{4}-\d{2}$/.test(m)) return; ADS.months[m]=ADS.months[m]||{}; renderAds(); };
+$('#btnAdsAddChan').onclick=()=>{ const c=prompt('Nama channel iklan baru, mis. Iklan Google Ads'); if(!c) return; if(ADS.channels.includes(c)) return toast('sudah ada'); ADS.channels.push(c); ADS.attribution[c]='all'; renderAds(); $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; };
+$('#btnAdsSave').onclick=async()=>{ const t=$('#toko').value; if(!t) return toast('pilih toko'); ADS.notes=$('#adsNotes').value; ADS.prorate=$('#adsProrate').checked; try{ await api('/api/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:t,channels:ADS.channels,attribution:ADS.attribution,months:ADS.months,notes:ADS.notes,prorate:$('#adsProrate').checked})}); toast('iklan tersimpan — klik Hitung untuk update laporan'); loadAds(); }catch(e){ toast('gagal: '+e.message); } };
+
+// init
+(async()=>{ await loadMe(); await loadToko(); try{ const t=localStorage.getItem('sa_tab'); if(t) document.querySelector(`.tabs button[data-tab="${t}"]`)?.click(); }catch(e){} })();
+</script>
+</body>
+</html>
