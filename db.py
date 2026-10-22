@@ -12,6 +12,7 @@ File export mentah tetap diarsipkan di <SA_DATA_DIR>/<toko>/ (dibutuhkan untuk p
 import os
 import json
 import time
+import contextvars
 import datetime as dt
 
 import pandas as pd
@@ -22,12 +23,48 @@ from sqlalchemy import (MetaData, Table, Column, Integer, String, Text, Float, B
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.abspath(os.path.expanduser(os.environ.get("SA_DATA_DIR") or os.path.join(ROOT, "data")))
 
+# ---------------------------------------------------------------- workspace aktif
+# Mode SaaS: tiap pelanggan punya workspace sendiri; toko, upload, HPP, iklan semua terikat ke workspace.
+# Workspace aktif disimpan di contextvar yang di-set middleware app.py per request (dari sesi login).
+# Default 1 = workspace pertama ("Mierakigai"): dipakai mode lokal, CLI, migrate.py.
+DEFAULT_WS = 1
+_ws = contextvars.ContextVar("sa_workspace", default=DEFAULT_WS)
+
+
+def current_ws():
+    return _ws.get()
+
+
+def set_ws(ws_id):
+    _ws.set(int(ws_id or DEFAULT_WS))
+
+
 meta = MetaData()
+
+workspace = Table(
+    "workspace", meta,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(120), nullable=False),
+    Column("owner", String(254), nullable=False, default=""),      # app_user.name pemilik
+    Column("created_at", DateTime, nullable=False),
+)
+
+ws_invite = Table(
+    "ws_invite", meta,
+    Column("id", Integer, primary_key=True),
+    Column("workspace_id", Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False),
+    Column("email", String(254), nullable=False),
+    Column("role", String(16), nullable=False, default="user"),
+    Column("invited_by", String(254), nullable=False, default=""),
+    Column("created_at", DateTime, nullable=False),
+    UniqueConstraint("workspace_id", "email", name="uq_ws_invite"),
+)
 
 toko = Table(
     "toko", meta,
     Column("id", Integer, primary_key=True),
-    Column("name", String(120), nullable=False, unique=True),
+    Column("workspace_id", Integer, nullable=False, default=DEFAULT_WS),
+    Column("name", String(120), nullable=False),
     Column("created_at", DateTime, nullable=False),
     Column("version", Integer, nullable=False, default=0),   # naik tiap ada perubahan data toko → kunci cache
     Column("hpp_col", String(16), nullable=False, default="hpp"),
@@ -35,6 +72,7 @@ toko = Table(
     Column("hpp_updated", String(32), nullable=False, default=""),
     Column("ads_notes", Text, nullable=False, default=""),
     Column("ads_prorate", Boolean, nullable=False, default=False),
+    UniqueConstraint("workspace_id", "name", name="uq_toko_ws_name"),
 )
 
 upload = Table(
@@ -142,12 +180,54 @@ ads_month = Table(
 
 app_user = Table(
     "app_user", meta,
-    Column("name", String(64), primary_key=True),
-    Column("hash", Text, nullable=False),
-    Column("role", String(16), nullable=False, default="user"),
+    Column("name", String(254), primary_key=True),              # username (login password) atau email (login Google)
+    Column("hash", Text, nullable=False),                       # "" = akun Google tanpa password
+    Column("role", String(16), nullable=False, default="user"),  # peran di dalam workspace-nya
     Column("created", Integer, nullable=False, default=0),
     Column("pw_changed", Integer, nullable=False, default=0),
+    Column("workspace_id", Integer, nullable=False, default=DEFAULT_WS),
+    Column("email", String(254), nullable=False, default=""),
+    Column("google_sub", String(64), nullable=False, default=""),
+    Column("display_name", String(120), nullable=False, default=""),
+    Column("picture", Text, nullable=False, default=""),
 )
+
+USER_EXTRA_COLS = ("workspace_id", "email", "google_sub", "display_name", "picture")
+
+
+def _migrate_schema(eng):
+    """Tambah kolom/tabel versi SaaS ke database lama (sebelum ada workspace). Aman diulang."""
+    def run(cx, sql):
+        sp = cx.begin_nested()   # savepoint: DDL yang gagal (mis. kolom sudah ada) tidak membatalkan transaksi utama
+        try:
+            cx.execute(sa.text(sql))
+            sp.commit()
+            return True
+        except Exception:
+            sp.rollback()
+            return False
+
+    pg = not db_url().startswith("sqlite")
+    with eng.begin() as cx:
+        cols_toko = {c["name"] for c in sa.inspect(cx).get_columns("toko")}
+        if "workspace_id" not in cols_toko:
+            run(cx, f"ALTER TABLE toko ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT {DEFAULT_WS}")
+        cols_user = {c["name"] for c in sa.inspect(cx).get_columns("app_user")}
+        for col, ddl in (("workspace_id", f"INTEGER NOT NULL DEFAULT {DEFAULT_WS}"), ("email", "VARCHAR(254) NOT NULL DEFAULT ''"),
+                         ("google_sub", "VARCHAR(64) NOT NULL DEFAULT ''"), ("display_name", "VARCHAR(120) NOT NULL DEFAULT ''"),
+                         ("picture", "TEXT NOT NULL DEFAULT ''")):
+            if col not in cols_user:
+                run(cx, f"ALTER TABLE app_user ADD COLUMN {col} {ddl}")
+        if pg:
+            run(cx, "ALTER TABLE app_user ALTER COLUMN name TYPE VARCHAR(254)")
+            run(cx, "ALTER TABLE toko DROP CONSTRAINT IF EXISTS toko_name_key")   # unik dulu per nama → kini per (workspace, nama)
+            run(cx, "CREATE UNIQUE INDEX IF NOT EXISTS uq_toko_ws_name ON toko (workspace_id, name)")
+        if cx.execute(select(func.count()).select_from(workspace).where(workspace.c.id == DEFAULT_WS)).scalar() == 0:
+            owner = cx.execute(select(app_user.c.name).where(app_user.c.role == "admin").order_by(app_user.c.created)).scalar() or ""
+            cx.execute(insert(workspace).values(id=DEFAULT_WS, name=os.environ.get("SA_WS_NAME", "Mierakigai"), owner=owner,
+                                                created_at=dt.datetime.now()))
+        if pg:
+            run(cx, "SELECT setval(pg_get_serial_sequence('workspace','id'), GREATEST((SELECT MAX(id) FROM workspace), 1))")
 
 
 # ---------------------------------------------------------------- engine
@@ -179,6 +259,7 @@ def engine():
         else:
             _engine = sa.create_engine(url, future=True, pool_pre_ping=True)
         meta.create_all(_engine)
+        _migrate_schema(_engine)
     return _engine
 
 
@@ -196,19 +277,25 @@ def safe_name(name):
 
 
 def archive_dir(name):
-    return os.path.join(DATA, safe_name(name))
+    """Folder arsip file mentah. Workspace pertama tetap <DATA>/<toko>/ (kompatibel dengan arsip lama),
+    workspace lain di <DATA>/_ws/<id>/<toko>/."""
+    ws = current_ws()
+    if ws == DEFAULT_WS:
+        return os.path.join(DATA, safe_name(name))
+    return os.path.join(DATA, "_ws", str(ws), safe_name(name))
 
 
 def list_toko():
     with engine().connect() as cx:
-        return [r[0] for r in cx.execute(select(toko.c.name).order_by(toko.c.name))]
+        return [r[0] for r in cx.execute(select(toko.c.name).where(toko.c.workspace_id == current_ws()).order_by(toko.c.name))]
 
 
 def toko_id(cx, name, create=False):
     name = safe_name(name)
-    tid = cx.execute(select(toko.c.id).where(toko.c.name == name)).scalar()
+    ws = current_ws()
+    tid = cx.execute(select(toko.c.id).where(toko.c.name == name, toko.c.workspace_id == ws)).scalar()
     if tid is None and create:
-        tid = cx.execute(insert(toko).values(name=name, created_at=dt.datetime.now(), version=0)).inserted_primary_key[0]
+        tid = cx.execute(insert(toko).values(name=name, workspace_id=ws, created_at=dt.datetime.now(), version=0)).inserted_primary_key[0]
     return tid
 
 
@@ -236,7 +323,7 @@ def bump(cx, tid):
 
 def version(name):
     with engine().connect() as cx:
-        return cx.execute(select(toko.c.version).where(toko.c.name == safe_name(name))).scalar()
+        return cx.execute(select(toko.c.version).where(toko.c.name == safe_name(name), toko.c.workspace_id == current_ws())).scalar()
 
 
 def file_count(name):
@@ -476,18 +563,91 @@ def export_settings(name):
 
 # ---------------------------------------------------------------- pengguna
 
+def _user_row(r):
+    return dict(hash=r["hash"], role=r["role"], created=r["created"], pw_changed=r["pw_changed"],
+                workspace_id=int(r["workspace_id"] or DEFAULT_WS), email=r["email"] or "", google_sub=r["google_sub"] or "",
+                display_name=r["display_name"] or "", picture=r["picture"] or "")
+
+
 def users_load():
+    """Semua akun (lintas workspace) → {name: {...}}. Dipakai auth untuk login/sesi."""
     with engine().connect() as cx:
         rows = cx.execute(select(app_user)).mappings().all()
-    return {r["name"]: dict(hash=r["hash"], role=r["role"], created=r["created"], pw_changed=r["pw_changed"]) for r in rows}
+    return {r["name"]: _user_row(r) for r in rows}
+
+
+def _user_values(k, v):
+    return dict(name=k, hash=v.get("hash", ""), role=v.get("role", "user"), created=int(v.get("created") or 0),
+                pw_changed=int(v.get("pw_changed") or 0), workspace_id=int(v.get("workspace_id") or DEFAULT_WS),
+                email=v.get("email", "") or "", google_sub=v.get("google_sub", "") or "",
+                display_name=v.get("display_name", "") or "", picture=v.get("picture", "") or "")
 
 
 def users_save(users):
+    """Simpan ulang SEMUA akun (dict lengkap dari users_load yang sudah diubah)."""
     with engine().begin() as cx:
         cx.execute(delete(app_user))
         if users:
-            cx.execute(insert(app_user), [dict(name=k, hash=v["hash"], role=v.get("role", "user"), created=int(v.get("created") or 0),
-                                               pw_changed=int(v.get("pw_changed") or 0)) for k, v in users.items()])
+            cx.execute(insert(app_user), [_user_values(k, v) for k, v in users.items()])
+
+
+def user_upsert(name, v):
+    """Simpan satu akun tanpa menyentuh akun lain (aman untuk sign-up paralel)."""
+    with engine().begin() as cx:
+        cx.execute(delete(app_user).where(app_user.c.name == name))
+        cx.execute(insert(app_user).values(**_user_values(name, v)))
+
+
+# ---------------------------------------------------------------- workspace & undangan
+
+def ws_create(name, owner):
+    with engine().begin() as cx:
+        return cx.execute(insert(workspace).values(name=name, owner=owner, created_at=dt.datetime.now())).inserted_primary_key[0]
+
+
+def ws_get(ws_id):
+    with engine().connect() as cx:
+        r = cx.execute(select(workspace).where(workspace.c.id == int(ws_id))).mappings().first()
+    return dict(r) if r else None
+
+
+def ws_rename(ws_id, name):
+    with engine().begin() as cx:
+        cx.execute(update(workspace).where(workspace.c.id == int(ws_id)).values(name=name))
+
+
+def ws_members(ws_id):
+    with engine().connect() as cx:
+        rows = cx.execute(select(app_user).where(app_user.c.workspace_id == int(ws_id)).order_by(app_user.c.created)).mappings().all()
+    return {r["name"]: _user_row(r) for r in rows}
+
+
+def invite_add(ws_id, email, role, invited_by):
+    with engine().begin() as cx:
+        cx.execute(delete(ws_invite).where(ws_invite.c.workspace_id == int(ws_id), ws_invite.c.email == email))
+        cx.execute(insert(ws_invite).values(workspace_id=int(ws_id), email=email, role=role, invited_by=invited_by,
+                                            created_at=dt.datetime.now()))
+
+
+def invite_list(ws_id):
+    with engine().connect() as cx:
+        rows = cx.execute(select(ws_invite).where(ws_invite.c.workspace_id == int(ws_id)).order_by(ws_invite.c.created_at)).mappings().all()
+    return [dict(email=r["email"], role=r["role"], invited_by=r["invited_by"], created=r["created_at"].isoformat()) for r in rows]
+
+
+def invite_remove(ws_id, email):
+    with engine().begin() as cx:
+        cx.execute(delete(ws_invite).where(ws_invite.c.workspace_id == int(ws_id), ws_invite.c.email == email))
+
+
+def invite_pop(email):
+    """Undangan terlama untuk email ini (dihapus setelah dipakai) → dict(workspace_id, role) atau None."""
+    with engine().begin() as cx:
+        r = cx.execute(select(ws_invite).where(ws_invite.c.email == email).order_by(ws_invite.c.created_at)).mappings().first()
+        if not r:
+            return None
+        cx.execute(delete(ws_invite).where(ws_invite.c.id == r["id"]))
+        return dict(workspace_id=r["workspace_id"], role=r["role"])
 
 
 def stats():

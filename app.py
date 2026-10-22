@@ -8,8 +8,10 @@ import sys
 import shutil
 import glob
 import math
+import secrets
 import threading
 from typing import List, Optional
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
@@ -27,7 +29,8 @@ import parsers
 ROOT = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
 NO_STORE = {"Cache-Control": "no-store, max-age=0"}
-PUBLIC_PATHS = {"/login", "/api/login", "/favicon.ico", "/healthz"}
+PUBLIC_PATHS = {"/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz"}
+OAUTH_COOKIE = "sa_oauth"
 
 
 # ---------------------------------------------------------------- login (mode server)
@@ -35,7 +38,7 @@ PUBLIC_PATHS = {"/login", "/api/login", "/favicon.ico", "/healthz"}
 def current_user(request: Request):
     """Mode lokal: tanpa login, dianggap admin. Mode server: dari cookie sesi."""
     if auth.is_local():
-        return dict(name="lokal", role="admin")
+        return dict(name="lokal", role="admin", workspace_id=db.DEFAULT_WS, email="", display_name="lokal", picture="", google=False)
     tok = request.cookies.get(auth.COOKIE)
     return auth.verify_token(tok) if tok else None
 
@@ -43,6 +46,7 @@ def current_user(request: Request):
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
+    db.set_ws(db.DEFAULT_WS)
     if auth.is_local() or path in PUBLIC_PATHS:
         return await call_next(request)
     user = current_user(request)
@@ -51,6 +55,7 @@ async def require_login(request: Request, call_next):
             return JSONResponse({"detail": "belum login"}, status_code=401, headers=NO_STORE)
         return RedirectResponse("/login", status_code=303)
     request.state.user = user
+    db.set_ws(user["workspace_id"])    # semua query data di request ini terkunci ke workspace pemakai
     return await call_next(request)
 
 
@@ -108,10 +113,102 @@ def api_logout(request: Request):
     return resp
 
 
+@app.get("/api/login-config")
+def api_login_config():
+    """Dibaca halaman login: tombol Google tampil hanya kalau OAuth sudah dikonfigurasi."""
+    return JSONResponse(dict(google=auth.google_enabled(), password=True), headers=NO_STORE)
+
+
+@app.get("/auth/google")
+def auth_google(request: Request):
+    if auth.is_local() or current_user(request):
+        return RedirectResponse("/", status_code=303)
+    if not auth.google_enabled():
+        return RedirectResponse("/login?err=" + quote("masuk dengan Google belum diaktifkan"), status_code=303)
+    state = secrets.token_urlsafe(24)
+    resp = RedirectResponse(auth.google_auth_url(state), status_code=303)
+    resp.set_cookie(OAUTH_COOKIE, state, max_age=600, httponly=True, samesite="lax", secure=_secure_cookie(request), path="/auth/")
+    return resp
+
+
+@app.get("/auth/google/callback")
+def auth_google_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    def fail(msg):
+        r = RedirectResponse("/login?err=" + quote(msg), status_code=303)
+        r.delete_cookie(OAUTH_COOKIE, path="/auth/")
+        return r
+    if error or not code:
+        return fail("masuk dengan Google dibatalkan")
+    expect = request.cookies.get(OAUTH_COOKIE, "")
+    if not state or not expect or not secrets.compare_digest(state, expect):
+        return fail("sesi masuk kedaluwarsa — coba lagi")
+    try:
+        profile = auth.google_fetch_profile(code)
+        tok, status = auth.google_login(profile)
+    except (PermissionError, ValueError) as e:
+        return fail(str(e))
+    except Exception:
+        return fail("gagal menghubungi Google — coba lagi")
+    resp = RedirectResponse("/" + ("?welcome=1" if status == "created" else ""), status_code=303)
+    resp.delete_cookie(OAUTH_COOKIE, path="/auth/")
+    resp.set_cookie(auth.COOKIE, tok, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=_secure_cookie(request), path="/")
+    return resp
+
+
 @app.get("/api/me")
 def api_me(request: Request):
     u = current_user(request)
-    return JSONResponse(dict(user=u["name"], role=u["role"], local=auth.is_local(), mode=auth.mode()), headers=NO_STORE)
+    ws = db.ws_get(u["workspace_id"]) or dict(id=u["workspace_id"], name="")
+    return JSONResponse(dict(user=u["name"], role=u["role"], local=auth.is_local(), mode=auth.mode(),
+                             email=u.get("email", ""), display_name=u.get("display_name") or u["name"], picture=u.get("picture", ""),
+                             google=u.get("google", False), workspace=dict(id=ws["id"], name=ws["name"])), headers=NO_STORE)
+
+
+class WsIn(BaseModel):
+    name: str
+
+
+@app.post("/api/workspace")
+def api_workspace_rename(body: WsIn, request: Request):
+    u = require_admin(request)
+    name = body.name.strip()[:120]
+    if not name:
+        raise HTTPException(400, "nama workspace kosong")
+    db.ws_rename(u["workspace_id"], name)
+    return dict(ok=True, name=name)
+
+
+class InviteIn(BaseModel):
+    email: str
+    role: Optional[str] = "user"
+
+
+@app.get("/api/invites")
+def api_invites(request: Request):
+    u = require_admin(request)
+    return db.invite_list(u["workspace_id"])
+
+
+@app.post("/api/invites")
+def api_invites_add(body: InviteIn, request: Request):
+    u = require_admin(request)
+    try:
+        email = auth.norm_email(body.email)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    role = body.role if body.role in auth.ROLES else "user"
+    if any(m.get("email") == email for m in db.ws_members(u["workspace_id"]).values()):
+        raise HTTPException(400, "email ini sudah jadi anggota")
+    db.invite_add(u["workspace_id"], email, role, u["name"])
+    return dict(ok=True, email=email, role=role)
+
+
+@app.delete("/api/invites")
+def api_invites_delete(email: str, request: Request):
+    u = require_admin(request)
+    db.invite_remove(u["workspace_id"], email.strip().lower())
+    return dict(ok=True)
 
 
 @app.get("/api/users")
@@ -143,6 +240,8 @@ def api_users_password(body: UserIn, request: Request):
     name = auth.norm_name(body.name)
     if me["role"] != "admin" and name != me["name"]:
         raise HTTPException(403, "hanya boleh ganti password sendiri")
+    if name != me["name"] and name not in db.ws_members(me["workspace_id"]):
+        raise HTTPException(404, "pengguna tidak ada")
     try:
         auth.set_password(name, body.password or "")
     except ValueError as e:
@@ -206,12 +305,13 @@ def get_data(toko):
     if toko not in analysis.list_toko():
         raise HTTPException(404, f"toko '{toko}' tidak ada")
     sig = _signature(toko)
+    key = (db.current_ws(), toko)      # cache per workspace: nama toko boleh sama di workspace berbeda
     with _lock:
-        hit = _cache.get(toko)
+        hit = _cache.get(key)
         if hit and hit[0] == sig:
             return hit[1]
         data = analysis.load_toko(toko)
-        _cache[toko] = (sig, data)
+        _cache[key] = (sig, data)
         return data
 
 
@@ -253,7 +353,7 @@ def api_toko_delete(toko: str, request: Request):
     if not db.delete_toko(toko):
         raise HTTPException(404, "toko tidak ada")
     shutil.rmtree(analysis.toko_dir(toko), ignore_errors=True)
-    _cache.pop(toko, None)
+    _cache.pop((db.current_ws(), toko), None)
     return dict(ok=True)
 
 

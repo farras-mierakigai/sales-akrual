@@ -22,24 +22,49 @@ button{font:inherit;font-weight:700;width:100%;margin-top:18px;padding:10px 14px
 button:disabled{opacity:.6;cursor:default}
 .err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
 .foot{color:var(--muted);font-size:12px;text-align:center;margin-top:14px}
+.gbtn{display:none;align-items:center;justify-content:center;gap:10px;width:100%;padding:10px 14px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--ink);font-weight:700;text-decoration:none;box-shadow:var(--shadow)}
+.gbtn:hover{background:var(--bg2)}
+.gbtn svg{width:18px;height:18px}
+.or{display:none;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:16px 0 2px}
+.or:before,.or:after{content:"";flex:1;border-top:1px solid var(--line)}
+.pwtoggle{display:none;margin-top:14px;background:none;border:0;box-shadow:none;color:var(--purple);font-weight:600;font-size:12px;padding:0;width:auto}
 </style>
 </head>
 <body>
 <div class="box">
   <div class="card">
-    <div class="brand"><div class="logo">MKG</div><div><h1>Sales Akrual</h1><div class="sub">Masuk dengan akun tim Mierakigai</div></div></div>
+    <div class="brand"><div class="logo">MKG</div><div><h1>Sales Akrual</h1><div class="sub" id="sub">Analisa penjualan riil Shopee · TikTok · Tokopedia</div></div></div>
+    <a class="gbtn" id="g" href="/auth/google"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.3 0 11.7-2.1 15.6-5.7l-7.7-6c-2.1 1.4-4.8 2.3-7.9 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg><span>Masuk / daftar dengan Google</span></a>
+    <div class="or" id="or">atau</div>
+    <button class="pwtoggle" id="pwtoggle" type="button">masuk dengan nama pengguna &amp; password</button>
     <form id="f" autocomplete="on">
       <label for="u">Nama pengguna</label>
-      <input id="u" name="username" autocomplete="username" autofocus required>
+      <input id="u" name="username" autocomplete="username" required>
       <label for="p">Password</label>
       <input id="p" name="password" type="password" autocomplete="current-password" required>
       <button id="b" type="submit">Masuk</button>
-      <div class="err" id="err"></div>
     </form>
+    <div class="err" id="err"></div>
   </div>
-  <div class="foot">Belum punya akun? Minta admin (Farras) membuatkan di tab <b>Data &amp; file → Pengguna</b>.</div>
+  <div class="foot" id="foot">Akun baru dibuat otomatis saat pertama kali masuk dengan Google. Diundang tim? Masuk dengan email Google yang diundang.</div>
 </div>
 <script>
+(async () => {
+  const q = new URLSearchParams(location.search);
+  if (q.get('err')) document.getElementById('err').textContent = q.get('err');
+  let cfg = {google:false, password:true};
+  try { cfg = await (await fetch('/api/login-config')).json(); } catch(_) {}
+  const f = document.getElementById('f'), g = document.getElementById('g'), or = document.getElementById('or'), t = document.getElementById('pwtoggle');
+  if (cfg.google) {
+    g.style.display = 'flex'; or.style.display = 'flex'; t.style.display = 'inline';
+    f.style.display = 'none';
+    t.onclick = () => { f.style.display = ''; t.style.display = 'none'; document.getElementById('u').focus(); };
+  } else {
+    document.getElementById('sub').textContent = 'Masuk dengan akun tim';
+    document.getElementById('foot').innerHTML = 'Belum punya akun? Minta admin membuatkan di tab <b>Data &amp; file → Anggota</b>.';
+    document.getElementById('u').focus();
+  }
+})();
 document.getElementById('f').onsubmit = async (e) => {
   e.preventDefault();
   const b = document.getElementById('b'), err = document.getElementById('err');

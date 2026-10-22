@@ -30,9 +30,17 @@ Kolom tabel baris = kolom DataFrame kanonis dari `parsers.py`, jadi `analysis.py
 
 ## Online untuk tim (mode server, di VPS)
 
-Mode server = ada **login multi-user** (file `data/.users.json`, password di-hash), fitur scan folder Mac dimatikan (tim pakai upload), app dengar di `0.0.0.0` di belakang Caddy (HTTPS otomatis). Semua pengguna bisa buat toko, upload, hitung, unduh laporan/audit; **hapus toko & kelola pengguna hanya admin**.
+Mode server = ada **login multi-user** (tabel `app_user`, password di-hash), fitur scan folder Mac dimatikan (tim pakai upload), app dengar di `0.0.0.0` di belakang Caddy (HTTPS otomatis). Semua pengguna bisa buat toko, upload, hitung, unduh laporan/audit; **hapus toko & kelola pengguna hanya admin**.
 
-Env yang dibaca `app.py`: `SA_MODE` (`local`/`server`), `SA_DATA_DIR`, `SA_HOST`, `SA_PORT`, `SA_SECRET` (rahasia cookie; kosong = dibuat otomatis di `data/.secret`), `SA_ADMIN_USER` + `SA_ADMIN_PASS` (admin pertama, dipakai hanya kalau belum ada pengguna).
+Env yang dibaca `app.py`: `SA_MODE` (`local`/`server`), `SA_DATA_DIR`, `SA_HOST`, `SA_PORT`, `SA_SECRET` (rahasia cookie; kosong = dibuat otomatis di `data/.secret`), `SA_ADMIN_USER` + `SA_ADMIN_PASS` (admin pertama, dipakai hanya kalau belum ada pengguna), `SA_GOOGLE_CLIENT_ID` + `SA_GOOGLE_CLIENT_SECRET` + `SA_BASE_URL` (masuk dengan Google, lihat bawah).
+
+### Mode SaaS: workspace per pelanggan & masuk dengan Google
+
+- **Workspace** = satu pelanggan/perusahaan. Toko, file, HPP, iklan terikat ke workspace; pengguna hanya melihat workspace-nya sendiri. Nama toko boleh sama di workspace berbeda. Data lama otomatis masuk workspace #1 (nama dari `SA_WS_NAME`, default "Mierakigai") saat database naik versi — tidak perlu migrasi manual.
+- **Daftar dengan Google**: tombol *Masuk / daftar dengan Google* di halaman login. Email baru → workspace baru, dia admin-nya. Email yang **diundang** (tab Data & file → Anggota → *Undang lewat Google*) → langsung jadi anggota workspace pengundang. Login username+password tetap ada (admin bisa membuat akun tanpa Google).
+- Setup Google: buat project di [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → OAuth consent screen (External, publish) → Credentials → OAuth client ID (Web application) → Authorized redirect URI `https://<domain>/auth/google/callback`. Isi `SA_GOOGLE_CLIENT_ID`, `SA_GOOGLE_CLIENT_SECRET`, `SA_BASE_URL=https://<domain>` di `.env`, lalu `docker compose up -d`. Tanpa ketiganya tombol Google tidak tampil.
+- Arsip file mentah: workspace #1 tetap di `data/<toko>/`; workspace lain di `data/_ws/<id>/<toko>/` (ikut di-backup `deploy/backup-arsip.sh`).
+- Tes: `python3 tests/test_workspace.py` (SQLite sementara; sign-up Google disimulasikan tanpa akses internet).
 
 ### Deploy pertama kali (Ubuntu/Debian VPS, 2 GB RAM cukup)
 
