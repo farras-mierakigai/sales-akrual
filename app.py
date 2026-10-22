@@ -465,7 +465,14 @@ def get_data(toko):
 @app.get("/")
 def index(request: Request):
     # jangan di-cache browser: tiap update kode langsung kebaca tanpa hard-refresh
-    if auth.is_local() or current_user(request):
+    u = current_user(request)
+    if u and not auth.is_local():
+        ws = db.ws_get(u["workspace_id"])
+        if ws and ws.get("status") == "suspended":      # "/" publik, jadi cek nonaktif diulang di sini
+            resp = RedirectResponse("/login?err=" + quote("Workspace ini dinonaktifkan. Hubungi farras@mierakigai.com."), status_code=303)
+            resp.delete_cookie(auth.COOKIE, path="/")
+            return resp
+    if auth.is_local() or u:
         return FileResponse(os.path.join(ROOT, "static", "index.html"), headers=NO_STORE)
     # pengunjung yang belum masuk → landing page produk
     return FileResponse(os.path.join(ROOT, "static", "landing.html"), headers=NO_STORE)
