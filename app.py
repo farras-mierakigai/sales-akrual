@@ -29,7 +29,8 @@ import parsers
 ROOT = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
 NO_STORE = {"Cache-Control": "no-store, max-age=0"}
-PUBLIC_PATHS = {"/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz"}
+PUBLIC_PATHS = {"/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz",
+                "/privacy", "/terms"}
 OAUTH_COOKIE = "sa_oauth"
 
 
@@ -324,6 +325,16 @@ def index():
 @app.get("/favicon.ico")
 def favicon():
     return Response(status_code=204)
+
+
+@app.get("/privacy")
+def privacy_page():
+    return FileResponse(os.path.join(ROOT, "static", "privacy.html"))
+
+
+@app.get("/terms")
+def terms_page():
+    return FileResponse(os.path.join(ROOT, "static", "terms.html"))
 
 
 @app.get("/api/toko")
