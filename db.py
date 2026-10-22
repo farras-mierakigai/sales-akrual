@@ -54,7 +54,7 @@ workspace = Table(
 customer = Table(
     "customer", meta,
     Column("id", Integer, primary_key=True),
-    Column("workspace_id", Integer, nullable=False, unique=True),
+    Column("workspace_id", Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, unique=True),
     Column("name", String(120), nullable=False, default=""),
     Column("email", String(254), nullable=False, default=""),
     Column("phone", String(32), nullable=False, default=""),
@@ -77,7 +77,7 @@ ws_invite = Table(
 toko = Table(
     "toko", meta,
     Column("id", Integer, primary_key=True),
-    Column("workspace_id", Integer, nullable=False, default=DEFAULT_WS),
+    Column("workspace_id", Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, default=DEFAULT_WS),
     Column("name", String(120), nullable=False),
     Column("created_at", DateTime, nullable=False),
     Column("version", Integer, nullable=False, default=0),   # naik tiap ada perubahan data toko → kunci cache
@@ -199,7 +199,7 @@ app_user = Table(
     Column("role", String(16), nullable=False, default="user"),  # peran di dalam workspace-nya
     Column("created", Integer, nullable=False, default=0),
     Column("pw_changed", Integer, nullable=False, default=0),
-    Column("workspace_id", Integer, nullable=False, default=DEFAULT_WS),
+    Column("workspace_id", Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, default=DEFAULT_WS),
     Column("email", String(254), nullable=False, default=""),
     Column("google_sub", String(64), nullable=False, default=""),
     Column("display_name", String(120), nullable=False, default=""),
@@ -245,6 +245,12 @@ def _migrate_schema(eng):
                                                 created_at=dt.datetime.now()))
         if pg:
             run(cx, "SELECT setval(pg_get_serial_sequence('workspace','id'), GREATEST((SELECT MAX(id) FROM workspace), 1))")
+            # FK workspace_id → workspace (database lama dibuat sebelum FK ini ada di definisi tabel). SQLite tidak bisa
+            # ADD CONSTRAINT; di sana FK hanya untuk database yang dibuat baru lewat create_all.
+            for t in ("toko", "app_user", "customer"):
+                if not any(fk["referred_table"] == "workspace" for fk in sa.inspect(cx).get_foreign_keys(t)):
+                    run(cx, f"ALTER TABLE {t} ADD CONSTRAINT fk_{t}_workspace FOREIGN KEY (workspace_id) "
+                            f"REFERENCES workspace (id) ON DELETE CASCADE")
 
 
 # ---------------------------------------------------------------- engine

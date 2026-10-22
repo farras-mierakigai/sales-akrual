@@ -76,6 +76,16 @@ deploy/backup-arsip.sh                              # manual
 crontab -e  →  30 2 * * * /home/<user>/sales-akrual/deploy/backup-arsip.sh >> /home/<user>/backup-arsip.log 2>&1
 ```
 
+### Backup database
+
+Arsip file hanya bisa membangun ulang baris order/penghasilan; akun, workspace, data pelanggan, HPP manual, dan iklan **hanya ada di Postgres**. `deploy/backup-db.sh` membuat `pg_dump` terkompresi ke `/opt/backups/sales-<tanggal>.sql.gz` (ubah lewat `SA_BACKUP_DIR`) dan menyimpan 14 hari terakhir (`SA_BACKUP_KEEP_DAYS`). Jadwalkan tiap malam sebelum backup arsip:
+
+```bash
+crontab -e  →  15 2 * * * /opt/sales-akrual/deploy/backup-db.sh >> /var/log/sales-akrual-backup.log 2>&1
+# pulihkan ke database kosong:
+gunzip -c /opt/backups/sales-2026-10-23-0215.sql.gz | docker compose exec -T db psql -U sales -d sales
+```
+
 Di Mac, `data/` juga clone repo yang sama: `git -C data pull` sebelum kerja, `deploy/backup-arsip.sh` setelah nambah file. Alternatif tanpa git: `deploy/sync-data.sh user@ip-vps` (rsync Mac → VPS).
 
 ### Operasional
