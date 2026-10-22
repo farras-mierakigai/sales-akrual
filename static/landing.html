@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales Akrual — laba bersih Shopee, TikTok Shop & Tokopedia per bulan</title>
+<meta name="description" content="Upload file export Shopee, TikTok Shop, dan Tokopedia, dapatkan penjualan riil per bulan order: sudah dipotong batal, refund, biaya marketplace, iklan, dan HPP. Gratis, daftar dengan Google.">
+<meta property="og:title" content="Sales Akrual — laba bersih marketplace per bulan">
+<meta property="og:description" content="Penjualan riil per bulan order dari file export Shopee, TikTok Shop, Tokopedia. Sudah dipotong batal, refund, biaya marketplace, iklan, HPP.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://apps.mierakigai.com/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#FFFFFF;--bg2:#F6F3FF;--lav:#EDE7FF;--ink:#1E1E1E;--ink2:#5B5B6B;--muted:#8A8A99;--line:#E6E3F0;--line2:#1E1E1E;--orange:#F4561E;--purple:#5E1AF1;--purple-dk:#340E7C;--good:#1B7F4A;--bad:#C62828;--radius:12px;--shadow:5px 5px 10px rgba(0,0,0,.08)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,sans-serif;font-size:16px;line-height:1.55}
+a{color:var(--purple)}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:5}
+.nav{display:flex;align-items:center;gap:14px;height:64px}
+.logo{width:36px;height:36px;border-radius:8px;background:var(--purple-dk);display:grid;place-items:center;color:#fff;font-weight:800;font-size:11px}
+.brand{font-weight:800;font-size:17px}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--muted);margin-top:-2px}
+.nav .sp{flex:1}
+.nav a.link{color:var(--ink2);text-decoration:none;font-weight:600;font-size:14px;padding:8px 10px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:11px 18px;border-radius:8px;font-weight:700;text-decoration:none;border:1px solid transparent;cursor:pointer;font-size:15px}
+.btn.primary{background:var(--orange);color:#fff;border-color:var(--orange);box-shadow:var(--shadow)}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.outline{background:#fff;color:var(--ink);border-color:var(--line2)}
+.btn.outline:hover{background:var(--bg2)}
+.btn svg{width:18px;height:18px}
+.hero{background:linear-gradient(160deg,var(--lav),#fff 70%);padding:64px 0 48px}
+.hero .grid{display:grid;grid-template-columns:1.1fr 1fr;gap:40px;align-items:center}
+.eyebrow{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:700;color:var(--purple-dk);margin-bottom:16px}
+h1{font-size:40px;line-height:1.15;margin:0 0 16px;font-weight:800;letter-spacing:-.01em}
+h1 em{font-style:normal;color:var(--purple)}
+.lead{font-size:18px;color:var(--ink2);margin:0 0 24px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.cta .note{font-size:13px;color:var(--muted);width:100%}
+.mock{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px}
+.mock .t{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.mock .t b{font-size:14px}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--lav);color:var(--purple-dk)}
+.mock table{width:100%;border-collapse:collapse}
+.mock th,.mock td{padding:7px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+.mock th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.mock td:first-child,.mock th:first-child{text-align:left}
+.mock .neg{color:var(--bad)}
+.mock .pos{color:var(--good);font-weight:800}
+.mock tr.total td{font-weight:800;border-top:2px solid var(--line2);border-bottom:0}
+.bar{display:flex;gap:6px;margin-top:12px;align-items:flex-end;height:56px}
+.bar i{flex:1;border-radius:4px 4px 0 0;background:var(--purple);opacity:.85}
+.bar i.o{background:var(--orange)}
+.bar i.t{background:#0F766E}
+section{padding:56px 0}
+section.alt{background:var(--bg2)}
+h2{font-size:28px;margin:0 0 8px;font-weight:800;letter-spacing:-.01em}
+.sub{color:var(--ink2);margin:0 0 28px;font-size:16px}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+.card .ic{width:36px;height:36px;border-radius:8px;background:var(--lav);display:grid;place-items:center;font-weight:800;color:var(--purple-dk);margin-bottom:12px;font-size:14px}
+.card h3{margin:0 0 6px;font-size:16px}
+.card p{margin:0;color:var(--ink2);font-size:14px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;counter-reset:s}
+.step{position:relative;padding:20px 20px 20px 64px;background:#fff;border:1px solid var(--line);border-radius:var(--radius)}
+.step:before{counter-increment:s;content:counter(s);position:absolute;left:20px;top:18px;width:32px;height:32px;border-radius:50%;background:var(--orange);color:#fff;font-weight:800;display:grid;place-items:center}
+.step h3{margin:0 0 4px;font-size:15px}
+.step p{margin:0;color:var(--ink2);font-size:14px}
+.list{display:grid;grid-template-columns:repeat(2,1fr);gap:10px 24px;margin:0;padding:0;list-style:none}
+.list li{padding-left:26px;position:relative;color:var(--ink2);font-size:15px}
+.list li:before{content:"✓";position:absolute;left:0;top:0;color:var(--good);font-weight:800}
+.faq details{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:10px}
+.faq summary{cursor:pointer;font-weight:700}
+.faq p{margin:8px 0 0;color:var(--ink2);font-size:14px}
+.final{text-align:center;background:var(--purple-dk);color:#fff;border-radius:var(--radius);padding:40px 24px}
+.final h2{color:#fff}
+.final p{color:#d9d0ff;margin:0 0 20px}
+footer{padding:28px 0;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+footer .row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+footer a{color:var(--ink2);text-decoration:none}
+@media (max-width:860px){.hero .grid,.cards,.steps,.list{grid-template-columns:1fr}h1{font-size:30px}.hero{padding:40px 0 32px}section{padding:40px 0}.nav a.link.hide{display:none}}
+</style>
+</head>
+<body>
+<header><div class="wrap nav">
+  <div class="logo">MKG</div><div class="brand">Sales Akrual<small>by Mierakigai</small></div>
+  <div class="sp"></div>
+  <a class="link hide" href="#fitur">Fitur</a><a class="link hide" href="#cara">Cara kerja</a><a class="link hide" href="#faq">FAQ</a>
+  <a class="link" href="/login">Masuk</a>
+  <a class="btn primary" href="/daftar">Daftar gratis</a>
+</div></header>
+
+<section class="hero"><div class="wrap grid">
+  <div>
+    <span class="eyebrow">Untuk seller Shopee · TikTok Shop · Tokopedia</span>
+    <h1>Tahu <em>laba bersih</em> tokomu per bulan, bukan cuma omzet.</h1>
+    <p class="lead">Upload file export marketplace, Sales Akrual menghitung penjualan riil per bulan order: sudah dipotong batal, refund, biaya marketplace, iklan, dan HPP. Angka yang sama dengan dana yang benar-benar masuk.</p>
+    <div class="cta">
+      <a class="btn primary" href="/daftar"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#fff" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" opacity=".9"/><path fill="#fff" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#fff" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.7l7.9-6.1z" opacity=".8"/><path fill="#fff" d="M24 48c6.3 0 11.7-2.1 15.6-5.7l-7.7-6c-2.1 1.4-4.8 2.3-7.9 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.5 42.6 14.6 48 24 48z" opacity=".9"/></svg>Daftar gratis dengan Google</a>
+      <a class="btn outline" href="#cara">Lihat cara kerja</a>
+      <span class="note">Tanpa kartu kredit. Data toko hanya terlihat oleh tim kamu.</span>
+    </div>
+  </div>
+  <div class="mock" aria-label="Contoh laporan">
+    <div class="t"><b>Laporan Akrual · Toko Kamu</b><span class="pill">Gabungan 3 platform</span></div>
+    <table>
+      <tr><th>Bulan</th><th>Bruto</th><th>Batal & refund</th><th>Biaya + iklan</th><th>HPP</th><th>Laba</th></tr>
+      <tr><td>Jul 26</td><td>128,4 jt</td><td class="neg">-9,1 jt</td><td class="neg">-24,6 jt</td><td class="neg">-51,2 jt</td><td class="pos">43,5 jt</td></tr>
+      <tr><td>Agu 26</td><td>141,9 jt</td><td class="neg">-11,3 jt</td><td class="neg">-27,0 jt</td><td class="neg">-56,8 jt</td><td class="pos">46,8 jt</td></tr>
+      <tr><td>Sep 26</td><td>156,2 jt</td><td class="neg">-10,4 jt</td><td class="neg">-30,9 jt</td><td class="neg">-61,0 jt</td><td class="pos">53,9 jt</td></tr>
+      <tr class="total"><td>Kuartal</td><td>426,5 jt</td><td class="neg">-30,8 jt</td><td class="neg">-82,5 jt</td><td class="neg">-169,0 jt</td><td class="pos">144,2 jt</td></tr>
+    </table>
+    <div class="bar" aria-hidden="true"><i style="height:55%"></i><i class="o" style="height:40%"></i><i class="t" style="height:18%"></i><i style="height:62%"></i><i class="o" style="height:46%"></i><i class="t" style="height:22%"></i><i style="height:70%"></i><i class="o" style="height:52%"></i><i class="t" style="height:26%"></i></div>
+    <div style="margin-top:6px;font-size:11px;color:var(--muted)">Ilustrasi. Angka kamu dihitung dari file export asli.</div>
+  </div>
+</div></section>
+
+<section id="masalah"><div class="wrap">
+  <h2>Omzet di dashboard marketplace bukan uang yang kamu terima</h2>
+  <p class="sub">Tiga hal yang membuat laporan toko biasanya salah, dan yang dibereskan Sales Akrual.</p>
+  <div class="cards">
+    <div class="card"><div class="ic">1</div><h3>Pesanan batal dan refund masih terhitung</h3><p>Dashboard menampilkan GMV. Sales Akrual membaca status tiap pesanan dan hanya menghitung yang benar-benar selesai.</p></div>
+    <div class="card"><div class="ic">2</div><h3>Biaya marketplace tersebar di banyak file</h3><p>Admin, proses pesanan, gratis ongkir XTRA, komisi afiliasi, PPh 22, komisi dinamis: semua dicocokkan ke pesanannya dari laporan penghasilan.</p></div>
+    <div class="card"><div class="ic">3</div><h3>Bulan pencairan ≠ bulan penjualan</h3><p>Dana cair 2 - 4 minggu setelah order. Semua angka diakui di bulan order dibuat (akrual), jadi laba per bulan jadi jujur dan bisa dibandingkan.</p></div>
+  </div>
+</div></section>
+
+<section class="alt" id="cara"><div class="wrap">
+  <h2>Cara kerja: 3 langkah, sekitar 5 menit</h2>
+  <p class="sub">Tidak perlu integrasi API, tidak perlu memberi akses akun seller. Cukup file export yang sudah biasa kamu unduh.</p>
+  <div class="steps">
+    <div class="step"><h3>Daftar dan buat toko</h3><p>Masuk dengan Google, isi data diri singkat, buat toko di workspace kamu. Satu workspace bisa berisi banyak toko dan anggota tim.</p></div>
+    <div class="step"><h3>Upload file export</h3><p>Shopee: Order.all dan Laporan Penghasilan. TikTok Shop dan Tokopedia: Semua pesanan dan income. Format dikenali otomatis dari isinya.</p></div>
+    <div class="step"><h3>Klik Hitung</h3><p>Laporan per bulan, per platform, per produk, status pesanan, HPP dan laba, iklan, plus audit kelengkapan data. Unduh ke Excel.</p></div>
+  </div>
+</div></section>
+
+<section id="fitur"><div class="wrap">
+  <h2>Yang kamu dapat</h2>
+  <p class="sub">Dibangun dari kebutuhan nyata agency yang mengelola beberapa brand marketplace sekaligus.</p>
+  <ul class="list">
+    <li>Penjualan riil per bulan order, gabungan atau per platform</li>
+    <li>Rincian potongan per jenis biaya, cocok dengan laporan penghasilan</li>
+    <li>HPP per produk dan laba kotor, impor dari sheet atau input manual</li>
+    <li>Biaya iklan per bulan per channel, dengan atribusi ke platform</li>
+    <li>Audit: pesanan tanpa income, file yang tumpang tindih, bulan yang kurang data</li>
+    <li>Lacak satu nomor pesanan dari order sampai dana cair</li>
+    <li>Laporan Excel siap kirim ke owner atau akuntan</li>
+    <li>Multi toko, multi anggota, data tiap workspace terisolasi</li>
+  </ul>
+</div></section>
+
+<section class="alt" id="faq"><div class="wrap">
+  <h2>Pertanyaan umum</h2>
+  <p class="sub">Belum terjawab? Email <a href="mailto:farras@mierakigai.com">farras@mierakigai.com</a>.</p>
+  <div class="faq">
+    <details><summary>Apakah gratis?</summary><p>Ya, saat ini gratis selama masa awal. Kalau nanti ada paket berbayar, pengguna awal diberi tahu lebih dulu dan data tetap bisa diunduh.</p></details>
+    <details><summary>Apakah perlu memberi akses akun Shopee atau TikTok?</summary><p>Tidak. Kamu hanya mengunggah file export yang kamu unduh sendiri dari seller center. Tidak ada koneksi ke akun marketplace.</p></details>
+    <details><summary>Siapa yang bisa melihat data toko saya?</summary><p>Hanya anggota workspace kamu. Pendaftar menjadi admin dan bisa mengundang anggota lewat email Google. Lihat <a href="/privacy">Kebijakan Privasi</a>.</p></details>
+    <details><summary>File apa saja yang didukung?</summary><p>Shopee: Order.all (Pesanan → Export) dan Laporan Penghasilan. TikTok Shop dan Tokopedia: Semua pesanan (CSV/XLSX) dan income. Deteksi dari isi file, bukan nama file.</p></details>
+    <details><summary>Bagaimana kalau tim saya bukan orang keuangan?</summary><p>Alurnya hanya upload lalu klik Hitung. Tab Audit menunjukkan file apa yang kurang supaya angkanya lengkap.</p></details>
+  </div>
+</div></section>
+
+<section><div class="wrap"><div class="final">
+  <h2>Mulai hitung laba bersih tokomu hari ini</h2>
+  <p>Daftar dengan Google, upload export bulan lalu, lihat angkanya dalam 5 menit.</p>
+  <a class="btn primary" href="/daftar">Daftar gratis</a>
+</div></div></section>
+
+<footer><div class="wrap row">
+  <span>© 2026 Mierakigai · Sales Akrual</span><span class="sp" style="flex:1"></span>
+  <a href="/login">Masuk</a><a href="/daftar">Daftar</a><a href="/privacy">Kebijakan Privasi</a><a href="/terms">Ketentuan Layanan</a><a href="mailto:farras@mierakigai.com">Kontak</a>
+</div></footer>
+</body>
+</html>

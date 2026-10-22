@@ -51,6 +51,16 @@ def test_bootstrap_and_password_login():
     assert client().post("/api/login", json=dict(username="farras", password="salah")).status_code == 401
 
 
+def test_landing_for_visitors_app_for_users():
+    r = client().get("/")
+    assert r.status_code == 200 and "Daftar gratis" in r.text and "Sales Akrual" in r.text
+    c = login_pw(client(), "farras", "rahasia123")
+    r2 = c.get("/")
+    assert r2.status_code == 200 and "Daftar gratis" not in r2.text and 'id="tblFiles"' in r2.text
+    # halaman app tetap butuh login lewat API
+    assert client().get("/api/toko").status_code == 401
+
+
 def test_login_config_and_google_redirect():
     c = client()
     assert c.get("/api/login-config").json()["google"] is True

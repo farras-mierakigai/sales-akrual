@@ -29,7 +29,7 @@ import parsers
 ROOT = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
 NO_STORE = {"Cache-Control": "no-store, max-age=0"}
-PUBLIC_PATHS = {"/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz",
+PUBLIC_PATHS = {"/", "/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz",
                 "/privacy", "/terms", "/daftar", "/daftar/lengkapi", "/api/signup/pending", "/api/signup/complete"}
 OAUTH_COOKIE = "sa_oauth"
 
@@ -463,9 +463,12 @@ def get_data(toko):
 
 
 @app.get("/")
-def index():
+def index(request: Request):
     # jangan di-cache browser: tiap update kode langsung kebaca tanpa hard-refresh
-    return FileResponse(os.path.join(ROOT, "static", "index.html"), headers=NO_STORE)
+    if auth.is_local() or current_user(request):
+        return FileResponse(os.path.join(ROOT, "static", "index.html"), headers=NO_STORE)
+    # pengunjung yang belum masuk → landing page produk
+    return FileResponse(os.path.join(ROOT, "static", "landing.html"), headers=NO_STORE)
 
 
 @app.get("/favicon.ico")
