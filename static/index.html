@@ -324,9 +324,9 @@ async function loadFiles(){
   try{
     const files = await api('/api/files?toko='+encodeURIComponent(t));
     if(!files.length){ tb.innerHTML='<tr><td class="muted">belum ada file</td></tr>'; return; }
-    tb.innerHTML = '<tr><th class="l">File</th><th class="l">Jenis</th><th class="l">Petunjuk toko</th><th>Baris</th><th class="l">Periode isi</th><th></th></tr>' + files.map(f=>{
+    tb.innerHTML = '<tr><th class="l">File</th><th class="l">Jenis</th><th class="l">Petunjuk toko</th><th>Baris</th><th class="l">Periode isi</th><th class="l">Diupload</th><th></th></tr>' + files.map(f=>{
       const rows = f.orders_rows||f.income_rows||f.unsettled_rows||0; const from=f.orders_from||f.income_from||f.unsettled_from||''; const to=f.orders_to||f.income_to||f.unsettled_to||'';
-      return `<tr><td class="l">${f.file}</td><td class="l ${f.kind==='corrupt'||!f.kind?'neg':''}">${f.label}</td><td class="l ${f.match===0?'neg':''}">${f.hint||f.seller||'<span class="muted">—</span>'}</td><td>${fmt(rows)}</td><td class="l">${from} → ${to}</td><td><button class="ghost" onclick="delFile('${f.file.replace(/'/g,"\\'")}')">hapus</button></td></tr>`;
+      return `<tr><td class="l">${f.file}</td><td class="l ${f.kind==='corrupt'||!f.kind?'neg':''}">${f.label}</td><td class="l ${f.match===0?'neg':''}">${f.hint||f.seller||'<span class="muted">—</span>'}</td><td>${fmt(rows)}</td><td class="l">${from} → ${to}</td><td class="l small">${f.uploaded_by||''}${f.uploaded_at?' · '+f.uploaded_at:''}</td><td><button class="ghost" onclick="delFile('${f.file.replace(/'/g,"\\'")}')">hapus</button></td></tr>`;
     }).join('');
   }catch(e){ tb.innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; }
 }
@@ -653,7 +653,7 @@ function renderAds(){
   document.querySelectorAll('.adscell').forEach(i=>{ i.onchange=()=>{ const m=i.dataset.m,c=decodeURIComponent(i.dataset.c); ADS.months[m]=ADS.months[m]||{}; const v=parseFloat((i.value||'0').replace(/\./g,'').replace(/,/g,'.'))||0; ADS.months[m][c]=v; i.value=v?fmt(v):''; const tot=ADS.channels.reduce((a,cc)=>a+(+ADS.months[m][cc]||0),0); $('#adstot-'+CSS.escape(m)).innerHTML='<b>'+fmt(tot)+'</b>'; $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }; });
   document.querySelectorAll('.adsattr').forEach(s2=>{ s2.onchange=()=>{ ADS.attribution[decodeURIComponent(s2.dataset.c)]=s2.value; $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }; });
   document.querySelectorAll('.adschan').forEach(sp=>{ sp.onblur=()=>{ const old=decodeURIComponent(sp.dataset.c), nw=sp.textContent.trim(); if(!nw||nw===old) { sp.textContent=old; return; } ADS.channels=ADS.channels.map(c=>c===old?nw:c); ADS.attribution[nw]=ADS.attribution[old]; delete ADS.attribution[old]; for(const m in ADS.months){ if(old in ADS.months[m]){ ADS.months[m][nw]=ADS.months[m][old]; delete ADS.months[m][old]; } } renderAds(); $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }; });
-  if(!$('#adsInfo').innerHTML.includes('belum')) $('#adsInfo').innerHTML=`${months.length} bulan · ${ch.length} channel · tersimpan di data/${$('#toko').value}/ads.json`;
+  if(!$('#adsInfo').innerHTML.includes('belum')) $('#adsInfo').innerHTML=`${months.length} bulan · ${ch.length} channel · tersimpan di database`;
 }
 function adsDelMonth(m){ if(!confirm('Kosongkan angka iklan '+monthName(m)+'?')) return; delete ADS.months[m]; renderAds(); $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; }
 $('#btnAdsAddMonth').onclick=()=>{ const m=prompt('Bulan (format YYYY-MM), mis. 2026-10'); if(!m||!/^\d{4}-\d{2}$/.test(m)) return; ADS.months[m]=ADS.months[m]||{}; renderAds(); };

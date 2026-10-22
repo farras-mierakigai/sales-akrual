@@ -1,5 +1,8 @@
 data/
 __pycache__/
 *.pkl
+*.db
+*.db-wal
+*.db-shm
 .DS_Store
 .env

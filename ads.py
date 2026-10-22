@@ -7,20 +7,13 @@ DEFAULT_CHANNELS = ["Iklan Shopee CPAS", "Iklan Meta Ads", "Iklan Shopee Ads", "
 DEFAULT_ATTR = {"Iklan Shopee CPAS": "shopee", "Iklan Meta Ads": "shopee", "Iklan Shopee Ads": "shopee", "Iklan Tiktok Ads": "tiktok"}
 
 
-def _path(toko_dir):
-    return os.path.join(toko_dir, "ads.json")
+def load(toko):
+    """Iklan per toko dari database. `toko` = nama toko."""
+    import db
+    return db.ads_load(toko, {"channels": list(DEFAULT_CHANNELS), "attribution": dict(DEFAULT_ATTR), "months": {}, "notes": "", "prorate": False})
 
 
-def load(toko_dir):
-    d = {"channels": list(DEFAULT_CHANNELS), "attribution": dict(DEFAULT_ATTR), "months": {}, "notes": "", "prorate": False}
-    p = _path(toko_dir)
-    if os.path.exists(p):
-        with open(p) as fh:
-            d.update(json.load(fh))
-    return d
-
-
-def save(toko_dir, data):
+def save(toko, data):
     clean = {
         "channels": [str(c).strip() for c in data.get("channels", DEFAULT_CHANNELS) if str(c).strip()],
         "attribution": {k: (v if v in ("shopee", "tiktok", "all") else "all") for k, v in (data.get("attribution") or {}).items()},
@@ -37,8 +30,8 @@ def save(toko_dir, data):
                 clean["months"][m][c] = float(v) if v not in (None, "") else 0.0
             except (TypeError, ValueError):
                 clean["months"][m][c] = 0.0
-    with open(_path(toko_dir), "w") as fh:
-        json.dump(clean, fh, ensure_ascii=False, indent=1)
+    import db
+    db.ads_save(toko, clean)
     return clean
 
 

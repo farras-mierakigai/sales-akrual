@@ -1,9 +1,26 @@
-# Sales Akrual di VPS.
-#   cp .env.example .env   → isi SA_DOMAIN (domain yang sudah diarahkan ke IP VPS) & SA_ADMIN_*
+# Sales Akrual di VPS: Postgres (data) + app (FastAPI) + Caddy (HTTPS).
+#   cp .env.example .env   → isi SA_DOMAIN, SA_DB_PASS, SA_ADMIN_*
 #   docker compose up -d --build
-# Caddy otomatis ambil sertifikat HTTPS (Let's Encrypt) untuk SA_DOMAIN.
-# Tanpa domain: set SA_DOMAIN=:80 → app diakses http://IP-VPS (tanpa HTTPS, tidak disarankan untuk data toko).
+#   deploy/sync-data.sh user@ip-vps   (dari Mac: salin arsip file export)
+#   docker compose exec app python3 migrate.py   (parse semua arsip ke database, sekali)
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sales
+      POSTGRES_USER: sales
+      POSTGRES_PASSWORD: ${SA_DB_PASS:?isi SA_DB_PASS di .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # hanya dari dalam VPS (developer: ssh -L 5432:127.0.0.1:5432 user@vps)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sales -d sales"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   app:
     build: .
     restart: unless-stopped
@@ -11,10 +28,14 @@ services:
     environment:
       SA_MODE: server
       SA_DATA_DIR: /data
+      SA_DB_URL: postgresql+psycopg://sales:${SA_DB_PASS}@db:5432/sales
     volumes:
-      - ./data:/data
+      - ./data:/data              # arsip file export mentah (bukan database)
     expose:
       - "8766"
+    depends_on:
+      db:
+        condition: service_healthy
 
   caddy:
     image: caddy:2-alpine
@@ -31,5 +52,6 @@ services:
       - app
 
 volumes:
+  pgdata:
   caddy_data:
   caddy_config:

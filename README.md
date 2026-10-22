@@ -8,7 +8,25 @@ Analisa penjualan **riil** Shopee · TikTok Shop · Tokopedia dari file export s
 cd "~/Documents/Github Repo Farras/sales-akrual" && python3 app.py
 ```
 
-lalu buka http://127.0.0.1:8766 (butuh: fastapi, uvicorn, pandas, openpyxl, python-multipart — `pip3 install --user -r requirements.txt`). Ini **mode lokal**: tanpa login, ada fitur scan folder Downloads.
+lalu buka http://127.0.0.1:8766 (`pip3 install --user -r requirements.txt`). Ini **mode lokal**: tanpa login, ada fitur scan folder Downloads, database = SQLite di `data/sales.db` (dibuat otomatis). Pindah dari versi lama yang masih berbasis file: `python3 migrate.py` sekali (membaca semua file di `data/<toko>/` ke database).
+
+## Database
+
+Semua hasil parsing disimpan per baris di database (`db.py`, SQLAlchemy): **Postgres** di VPS, **SQLite** di Mac. File export mentah tetap diarsipkan di `data/<toko>/` (dibutuhkan untuk parse ulang bila parser berubah: `python3 migrate.py`). Hitung membaca dari database (±2 detik), bukan parse file lagi.
+
+| Tabel | Isi |
+|---|---|
+| `toko` | nama toko, `version` (naik tiap data berubah; kunci cache), setelan HPP & catatan iklan |
+| `upload` | satu baris per file export: jenis, periode isi, ringkasan resmi platform (JSON, buat audit), siapa & kapan upload |
+| `order_line` | baris pesanan kanonis (semua export, belum dedup; dedup per `line_key` ambil file terbaru dilakukan saat Hitung) |
+| `income_line` | baris laporan penghasilan per order (potongan, refund, neto) |
+| `adjustment_line` | penyesuaian non-order TikTok |
+| `unsettled_line` | estimasi resmi TikTok untuk order belum cair |
+| `hpp_item`, `hpp_map` | master HPP (dari sheet + manual) dan pemetaan listing → item |
+| `ads_channel`, `ads_month` | channel iklan + atribusi, biaya per bulan |
+| `app_user` | akun login (hash PBKDF2, role) |
+
+Kolom tabel baris = kolom DataFrame kanonis dari `parsers.py`, jadi `analysis.py`/`audit.py` tidak tahu-menahu soal database. Developer bisa query langsung (Metabase, SQL) — angka laporan = `order_line` yang sudah dedup + aturan di `analysis.py` (batal, retur penuh, belum bayar), jangan langsung SUM `bruto` mentah.
 
 ## Online untuk tim (mode server, di VPS)
 
@@ -26,9 +44,9 @@ curl -fsSL https://get.docker.com | sh
 git clone git@github.com:farras-mierakigai/sales-akrual.git && cd sales-akrual
 
 # 3. konfigurasi
-cp .env.example .env && nano .env      # SA_DOMAIN (DNS A record → IP VPS), SA_ADMIN_USER, SA_ADMIN_PASS
+cp .env.example .env && nano .env      # SA_DOMAIN (DNS A record → IP VPS), SA_DB_PASS, SA_ADMIN_USER, SA_ADMIN_PASS
 
-# 4. jalankan (build ±2 menit)
+# 4. jalankan (build ±2 menit): Postgres + app + Caddy
 docker compose up -d --build
 docker compose logs -f app             # tunggu "Uvicorn running"
 ```
@@ -38,11 +56,9 @@ Buka `https://<SA_DOMAIN>` → login admin → tab **Data & file → Pengguna** 
 ### Pindahkan data yang sudah ada di Mac
 
 ```bash
-deploy/sync-data.sh user@ip-vps            # rsync data/ Mac → VPS (file cache & akun tidak ikut)
-ssh user@ip-vps 'cd sales-akrual && docker compose restart app'
+deploy/sync-data.sh user@ip-vps            # rsync arsip data/ Mac → VPS (database lokal & akun tidak ikut)
+ssh user@ip-vps 'cd sales-akrual && docker compose exec app python3 migrate.py'   # parse semua arsip ke Postgres (±1 menit per 50 file)
 ```
-
-Hitung pertama per toko di VPS membaca ulang semua file (1–2 menit untuk toko besar), setelah itu kena cache.
 
 ### Operasional
 
@@ -52,10 +68,12 @@ docker compose exec app python3 app.py adduser rina          # tambah user (tany
 docker compose exec app python3 app.py adduser budi --admin  # tambah admin
 docker compose exec app python3 app.py passwd farras         # reset password (lupa password admin)
 git pull && docker compose up -d --build                     # update kode
-tar czf backup-$(date +%F).tgz data/                         # backup = folder data/ saja
+docker compose exec app python3 migrate.py                   # parse ulang arsip kalau parsers.py berubah
+docker compose exec -T db pg_dump -U sales sales | gzip > backup-$(date +%F).sql.gz   # backup database
+tar czf arsip-$(date +%F).tgz data/                          # backup arsip file export
 ```
 
-Catatan: satu proses app (cache hasil baca di memori); kalau tim serentak klik Hitung di toko berbeda, antri sebentar — normal. Firewall VPS: buka hanya 22, 80, 443.
+Developer: `ssh -L 5432:127.0.0.1:5432 user@ip-vps` lalu sambungkan ke `postgresql://sales:<SA_DB_PASS>@localhost:5432/sales`. Catatan: satu proses app (cache hasil baca di memori); kalau tim serentak klik Hitung di toko berbeda, antri sebentar — normal. Firewall VPS: buka hanya 22, 80, 443.
 
 ## Alur pakai
 
@@ -74,7 +92,7 @@ Catatan: satu proses app (cache hasil baca di memori); kalau tim serentak klik H
 | TikTok/Tokopedia | `income_*.xlsx` (Keuangan → Laporan) | potongan per order, refund, settlement; header Inggris 2025 (*TikTok Shop commission fee*, *Flat fee*, *Dynamic Commission*), Inggris 2026, maupun Indonesia |
 | TikTok | `Onhold-unsettled-*.xlsx` (Keuangan → Belum dibayar) | opsional: estimasi resmi dana per order yang belum cair |
 
-Periode file boleh tumpang-tindih: baris yang sama diambil dari file yang paling baru (status paling mutakhir). File besar di-cache di `data/<toko>/.cache/` setelah dibaca pertama kali.
+Periode file boleh tumpang-tindih: baris yang sama diambil dari file yang paling baru (status paling mutakhir). File diparse sekali saat upload dan hasilnya disimpan di database.
 
 ## Definisi angka
 
@@ -89,8 +107,8 @@ Periode file boleh tumpang-tindih: baris yang sama diambil dari file yang paling
 
 ## HPP & laba (tab HPP & Laba)
 
-- Master HPP per toko: impor dari link Google Sheet (export xlsx; link harus bisa dibuka siapa saja) atau upload xlsx/csv dengan kolom **Nama Produk** + **HPP** (opsional Pembulatan, Harga Jual). Disimpan di `data/<toko>/hpp.json`; pilih kolom HPP presisi atau Pembulatan.
-- Pemetaan listing marketplace → item HPP: pertama lewat **kode SKU** listing = kolom *Kode* master (alias dipisah `/`, bundle `A+B` = jumlah komponen), lalu override manual per listing/SKU, lalu otomatis lewat nama model (token inti pertama, mis. Runa/Rumi/Nami); nama model yang unik di sheet dicocokkan longgar, yang dipakai beberapa item (mis. Aeri …) butuh kecocokan ≥ 75% token. Override manual disimpan di `data/<toko>/hpp_map.json`.
+- Master HPP per toko: impor dari link Google Sheet (export xlsx; link harus bisa dibuka siapa saja) atau upload xlsx/csv dengan kolom **Nama Produk** + **HPP** (opsional Pembulatan, Harga Jual). Disimpan di tabel `hpp_item`; pilih kolom HPP presisi atau Pembulatan.
+- Pemetaan listing marketplace → item HPP: pertama lewat **kode SKU** listing = kolom *Kode* master (alias dipisah `/`, bundle `A+B` = jumlah komponen), lalu override manual per listing/SKU, lalu otomatis lewat nama model (token inti pertama, mis. Runa/Rumi/Nami); nama model yang unik di sheet dicocokkan longgar, yang dipakai beberapa item (mis. Aeri …) butuh kecocokan ≥ 75% token. Override manual disimpan di tabel `hpp_map`.
 - Angka: **HPP produk terjual** = Σ qty × HPP (order non-batal non-retur, hanya qty yang punya HPP; cakupan ditampilkan), **Gross profit** = bruto − HPP, **GPM** = GP / bruto, **Laba setelah marketplace** = neto proyeksi − HPP (sebelum iklan & opex). Ada di tile, tab Per bulan, tab Produk (per listing), dan Excel.
 
 ## Audit (tab Audit)
@@ -108,7 +126,9 @@ Semua bisa diunduh sebagai `Audit Data Penjualan <toko>.xlsx` (sheet per temuan)
 - `analysis.py` — dedup, agregasi per bulan, breakdown produk/status/bayar, export Excel
 - `hpp.py` — master HPP per toko, impor sheet, pencocokan listing → item, gross profit
 - `audit.py` — kelengkapan, rekonsiliasi vs ringkasan resmi, temuan per order, jejak order, export audit
+- `db.py` — skema & akses database (SQLAlchemy): ingest file → tabel, baca tabel → DataFrame kanonis, HPP, iklan, pengguna
+- `migrate.py` — isi/parse ulang database dari arsip `data/<toko>/`
 - `app.py` — FastAPI (upload, scan folder [lokal], summary, export, login & pengguna, CLI `adduser`/`passwd`/`users`)
-- `auth.py` — akun & sesi mode server (PBKDF2 + cookie HMAC, tanpa database)
+- `auth.py` — akun & sesi mode server (PBKDF2 + cookie HMAC)
 - `static/index.html` — UI (palet website Mierakigai); `static/login.html` — halaman masuk
 - `Dockerfile`, `docker-compose.yml`, `deploy/Caddyfile`, `.env.example`, `deploy/sync-data.sh` — deploy ke VPS

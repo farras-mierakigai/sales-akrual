@@ -1,6 +1,6 @@
 """Login multi-user untuk mode server.
 
-Akun disimpan di <DATA_DIR>/.users.json (password di-hash PBKDF2-SHA256, tidak pernah disimpan mentah).
+Akun disimpan di tabel app_user (password di-hash PBKDF2-SHA256, tidak pernah disimpan mentah).
 Sesi = cookie bertanda tangan HMAC (rahasia di <DATA_DIR>/.secret atau env SA_SECRET), tanpa database.
 Mode lokal (SA_MODE=local, default di Mac) tidak butuh login: pemakai dianggap admin.
 """
@@ -14,6 +14,7 @@ import secrets
 import threading
 
 import analysis
+import db
 
 ROLES = ("admin", "user")
 COOKIE = "sa_session"
@@ -31,8 +32,7 @@ def is_local():
 
 
 def users_path():
-    os.makedirs(analysis.DATA, exist_ok=True)
-    return os.path.join(analysis.DATA, ".users.json")
+    return "tabel app_user di " + db.db_url().split("@")[-1]
 
 
 def _secret():
@@ -52,23 +52,11 @@ def _secret():
 # ---------------------------------------------------------------- users
 
 def load_users():
-    p = users_path()
-    if not os.path.exists(p):
-        return {}
-    with open(p) as fh:
-        return json.load(fh)
+    return db.users_load()
 
 
 def save_users(users):
-    p = users_path()
-    tmp = p + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(users, fh, indent=1, ensure_ascii=False)
-    os.replace(tmp, p)
-    try:
-        os.chmod(p, 0o600)
-    except OSError:
-        pass
+    db.users_save(users)
 
 
 def _hash(password, salt=None):

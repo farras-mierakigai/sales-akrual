@@ -19,6 +19,7 @@ from pydantic import BaseModel
 import analysis
 import audit
 import auth
+import db
 import hpp as hppmod
 import ads as adsmod
 import parsers
@@ -198,9 +199,7 @@ def clean(x):
 
 
 def _signature(toko):
-    d = analysis.toko_dir(toko)
-    extra = [os.path.join(d, n) for n in ("hpp.json", "hpp_map.json", "ads.json") if os.path.exists(os.path.join(d, n))]
-    return tuple((os.path.basename(p), os.stat(p).st_mtime, os.stat(p).st_size) for p in analysis.toko_files(toko) + extra)
+    return db.version(toko)
 
 
 def get_data(toko):
@@ -231,7 +230,7 @@ def favicon():
 def api_toko():
     out = []
     for t in analysis.list_toko():
-        out.append(dict(name=t, files=len(analysis.toko_files(t))))
+        out.append(dict(name=t, files=db.file_count(t)))
     return out
 
 
@@ -241,18 +240,19 @@ class TokoIn(BaseModel):
 
 @app.post("/api/toko")
 def api_toko_create(body: TokoIn):
-    d = analysis.toko_dir(body.name)
-    os.makedirs(d, exist_ok=True)
-    return dict(ok=True, name=os.path.basename(d))
+    try:
+        name = db.create_toko(body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True, name=name)
 
 
 @app.delete("/api/toko")
 def api_toko_delete(toko: str, request: Request):
     require_admin(request)
-    d = analysis.toko_dir(toko)
-    if not os.path.isdir(d):
+    if not db.delete_toko(toko):
         raise HTTPException(404, "toko tidak ada")
-    shutil.rmtree(d)
+    shutil.rmtree(analysis.toko_dir(toko), ignore_errors=True)
     _cache.pop(toko, None)
     return dict(ok=True)
 
@@ -265,29 +265,38 @@ def api_files(toko: str):
 
 @app.delete("/api/files")
 def api_files_delete(toko: str, name: str):
-    p = os.path.join(analysis.toko_dir(toko), os.path.basename(name))
-    if not os.path.isfile(p):
+    if not db.delete_file(toko, os.path.basename(name)):
         raise HTTPException(404, "file tidak ada")
-    os.remove(p)
+    p = os.path.join(analysis.toko_dir(toko), os.path.basename(name))
+    if os.path.isfile(p):
+        os.remove(p)
     return dict(ok=True)
 
 
 @app.post("/api/upload")
-async def api_upload(toko: str = Form(...), files: List[UploadFile] = File(...)):
+async def api_upload(request: Request, toko: str = Form(...), files: List[UploadFile] = File(...)):
+    if toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{toko}' tidak ada")
     d = analysis.toko_dir(toko)
     os.makedirs(d, exist_ok=True)
+    who = (current_user(request) or {}).get("name", "")
     results = []
     for f in files:
         name = os.path.basename(f.filename or "file")
         dest = os.path.join(d, name)
         with open(dest, "wb") as fh:
             shutil.copyfileobj(f.file, fh)
-        kind = parsers.detect(dest)
-        if kind is None:
+        try:
+            r = db.ingest_file(toko, dest, uploaded_by=who)
+        except Exception as e:
+            os.remove(dest)
+            results.append(dict(file=name, ok=False, msg=f"gagal dibaca: {e}"))
+            continue
+        if r is None:
             os.remove(dest)
             results.append(dict(file=name, ok=False, msg="format tidak dikenali — file dibuang"))
         else:
-            results.append(dict(file=name, ok=True, kind=parsers.KINDS[kind]))
+            results.append(dict(file=name, ok=True, kind=parsers.KINDS[r["kind"]]))
     return results
 
 
@@ -340,7 +349,9 @@ def api_import(body: ImportIn):
         if kind is None:
             results.append(dict(file=os.path.basename(src), ok=False, msg="format tidak dikenali"))
             continue
-        shutil.copy2(src, os.path.join(d, os.path.basename(src)))
+        dest = os.path.join(d, os.path.basename(src))
+        shutil.copy2(src, dest)
+        db.ingest_file(body.toko, dest)
         results.append(dict(file=os.path.basename(src), ok=True, kind=parsers.KINDS[kind]))
     return results
 
@@ -351,7 +362,7 @@ def api_summary(toko: str, platform: str = "all", m_from: Optional[str] = None, 
     O, I, A, files, raw = get_data(toko)
     O, I = analysis.filter_dates(O, I, d_from, d_to)
     U = raw.get("unsettled")
-    ADS = adsmod.load(analysis.toko_dir(toko))
+    ADS = adsmod.load(toko)
     res = analysis.monthly(O, I, platform, m_from, m_to, U, ADS, d_from, d_to)
     res["breakdown"] = analysis.breakdowns(O, I, platform, m_from, m_to, top=None)
     res["unsettled_status"] = analysis.unsettled_by_status(O, I, platform, m_from, m_to, U)
@@ -384,7 +395,7 @@ def api_produk_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = No
 def api_export(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = None, d_from: Optional[str] = None, d_to: Optional[str] = None):
     O, I, A, files, raw = get_data(toko)
     O, I = analysis.filter_dates(O, I, d_from, d_to)
-    wb = analysis.export_xlsx(toko, O, I, m_from, m_to, raw.get("unsettled"), adsmod.load(analysis.toko_dir(toko)), d_from, d_to)
+    wb = analysis.export_xlsx(toko, O, I, m_from, m_to, raw.get("unsettled"), adsmod.load(toko), d_from, d_to)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -398,8 +409,7 @@ def api_export(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = No
 @app.get("/api/ads")
 def api_ads(toko: str):
     O, I, A, files, raw = get_data(toko)
-    d = analysis.toko_dir(toko)
-    data = adsmod.load(d)
+    data = adsmod.load(toko)
     data["data_months"] = sorted(set(O["month"].dropna())) if len(O) else []
     return JSONResponse(clean(data))
 
@@ -415,9 +425,7 @@ class AdsIn(BaseModel):
 
 @app.post("/api/ads")
 def api_ads_save(body: AdsIn):
-    d = analysis.toko_dir(body.toko)
-    os.makedirs(d, exist_ok=True)
-    out = adsmod.save(d, body.dict())
+    out = adsmod.save(body.toko, body.dict())
     return clean(dict(ok=True, months=len(out["months"])))
 
 
@@ -426,9 +434,8 @@ def api_ads_save(body: AdsIn):
 @app.get("/api/hpp")
 def api_hpp(toko: str):
     O, I, A, files, raw = get_data(toko)
-    d = analysis.toko_dir(toko)
-    master, mapping = hppmod.load(d)
-    return JSONResponse(clean(dict(master=master, mapping=mapping, table=hppmod.mapping_table(O, d))))
+    master, mapping = hppmod.load(toko)
+    return JSONResponse(clean(dict(master=master, mapping=mapping, table=hppmod.mapping_table(O, toko))))
 
 
 class HppImportIn(BaseModel):
@@ -438,10 +445,8 @@ class HppImportIn(BaseModel):
 
 @app.post("/api/hpp/import")
 def api_hpp_import(body: HppImportIn):
-    d = analysis.toko_dir(body.toko)
-    os.makedirs(d, exist_ok=True)
     try:
-        master = hppmod.import_from(d, url=body.url.strip())
+        master = hppmod.import_from(body.toko, url=body.url.strip())
     except Exception as e:
         raise HTTPException(400, str(e))
     return clean(dict(ok=True, n=len(master["items"]), updated=master["updated"]))
@@ -449,11 +454,9 @@ def api_hpp_import(body: HppImportIn):
 
 @app.post("/api/hpp/upload")
 async def api_hpp_upload(toko: str = Form(...), file: UploadFile = File(...)):
-    d = analysis.toko_dir(toko)
-    os.makedirs(d, exist_ok=True)
     data = await file.read()
     try:
-        master = hppmod.import_from(d, data=data, filename=file.filename or "hpp.xlsx")
+        master = hppmod.import_from(toko, data=data, filename=file.filename or "hpp.xlsx")
     except Exception as e:
         raise HTTPException(400, str(e))
     return clean(dict(ok=True, n=len(master["items"]), updated=master["updated"]))
@@ -468,14 +471,13 @@ class HppMapIn(BaseModel):
 
 @app.post("/api/hpp/map")
 def api_hpp_map(body: HppMapIn):
-    d = analysis.toko_dir(body.toko)
-    master, mapping = hppmod.load(d)
+    master, mapping = hppmod.load(body.toko)
     key = (body.product + hppmod.SEP + body.sku) if body.sku else body.product
     if body.item is None:
         mapping.pop(key, None)
     else:
         mapping[key] = body.item
-    hppmod.save(d, mapping=mapping)
+    hppmod.save(body.toko, mapping=mapping)
     return dict(ok=True)
 
 
@@ -489,13 +491,12 @@ class HppItemIn(BaseModel):
 
 @app.post("/api/hpp/item")
 def api_hpp_item(body: HppItemIn):
-    d = analysis.toko_dir(body.toko)
     if body.remove:
-        hppmod.remove_item(d, body.name.strip())
+        hppmod.remove_item(body.toko, body.name.strip())
     else:
         if body.hpp is None or not body.name.strip():
             raise HTTPException(400, "nama & HPP wajib")
-        hppmod.add_item(d, body.name.strip(), body.hpp, kode=(body.kode or "").strip())
+        hppmod.add_item(body.toko, body.name.strip(), body.hpp, kode=(body.kode or "").strip())
     return dict(ok=True)
 
 
@@ -506,10 +507,9 @@ class HppColIn(BaseModel):
 
 @app.post("/api/hpp/col")
 def api_hpp_col(body: HppColIn):
-    d = analysis.toko_dir(body.toko)
-    master, mapping = hppmod.load(d)
+    master, mapping = hppmod.load(body.toko)
     master["col"] = body.col if body.col in ("hpp", "pembulatan") else "hpp"
-    hppmod.save(d, master=master)
+    hppmod.save(body.toko, master=master)
     return dict(ok=True)
 
 
@@ -574,5 +574,5 @@ if __name__ == "__main__":
     made = auth.bootstrap_from_env()
     if made:
         print(f"admin pertama dibuat dari env: {made}")
-    print(f"Sales Akrual [{auth.mode()}] data={analysis.DATA} → http://{host}:{port}")
+    print(f"Sales Akrual [{auth.mode()}] db={db.db_url().split('@')[-1]} arsip={analysis.DATA} → http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")

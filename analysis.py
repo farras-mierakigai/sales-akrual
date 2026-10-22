@@ -3,6 +3,7 @@ import os
 import glob
 import pandas as pd
 import parsers
+import db
 import hpp as hppmod
 import ads as adsmod
 from parsers import SHOPEE, TIKTOK, TOKOPEDIA
@@ -43,44 +44,21 @@ OTHER_LINES = {
 # ---------------------------------------------------------------- loading
 
 def list_toko():
-    os.makedirs(DATA, exist_ok=True)
-    return sorted(d for d in os.listdir(DATA) if os.path.isdir(os.path.join(DATA, d)) and not d.startswith("."))
+    return db.list_toko()
 
 
 def toko_dir(toko):
-    safe = "".join(c for c in toko if c.isalnum() or c in " -_").strip()
-    if not safe:
-        raise ValueError("nama toko kosong")
-    return os.path.join(DATA, safe)
-
-
-def toko_files(toko):
-    d = toko_dir(toko)
-    return sorted(p for p in glob.glob(os.path.join(d, "*")) if os.path.isfile(p) and not os.path.basename(p).startswith(".") and not p.lower().endswith(".json"))
+    """Folder arsip file export mentah (<DATA>/<toko>/). Data yang dihitung dibaca dari database."""
+    return db.archive_dir(toko)
 
 
 def load_toko(toko):
-    d = toko_dir(toko)
-    cache = os.path.join(d, ".cache")
-    orders, income, adj, files, unsettled = [], [], [], [], []
-    for p in toko_files(toko):
-        r = parsers.parse_file(p, cache)
-        if len(r.get("unsettled", [])):
-            unsettled.append(r["unsettled"])
-        m = dict(r["meta"]); m["kind"] = r["kind"]; m["label"] = parsers.KINDS.get(r["kind"], "Tidak dikenali")
-        if len(r["orders"]):
-            top = r["orders"]["product"].str.split(r"\s[-–]\s", n=1).str[0].str.strip()
+    """→ (O, I, A, files, raw) dari database — bentuk persis sama seperti saat masih membaca file."""
+    O, I, A, U, files = db.load_frames(toko)
+    for m in files:
+        if m["kind"] in ("shopee_orders", "tiktok_orders") and len(O):
+            top = O[O["file"] == m["file"]]["product"].str.split(r"\s[-–]\s", n=1).str[0].str.strip()
             m["hint"] = top.value_counts().index[0] if len(top) else ""
-            orders.append(r["orders"])
-        if len(r["income"]):
-            income.append(r["income"])
-        if len(r["adj"]):
-            adj.append(r["adj"])
-        files.append(m)
-    O = pd.concat(orders, ignore_index=True) if orders else pd.DataFrame()
-    I = pd.concat(income, ignore_index=True) if income else pd.DataFrame()
-    A = pd.concat(adj, ignore_index=True) if adj else pd.DataFrame()
-    U = pd.concat(unsettled, ignore_index=True) if unsettled else pd.DataFrame()
     if len(U):
         U = U.sort_values("file_mtime").drop_duplicates("line_key", keep="last").reset_index(drop=True)
     # petunjuk toko untuk file tanpa nama toko/produk: cocokkan nomor order ke file pesanan di toko ini
@@ -126,7 +104,7 @@ def load_toko(toko):
         I["is_retur"] = I["order_id"].isin(retur_ids)
     if len(O):
         O["is_retur"] = O["order_id"].isin(retur_ids) & ~O["is_batal"]
-        O = hppmod.apply(O, d)
+        O = hppmod.apply(O, toko)
     if len(A):
         A = A.drop_duplicates(["id", "type", "settled", "amount"]).reset_index(drop=True)
     return O, I, A, files, raw

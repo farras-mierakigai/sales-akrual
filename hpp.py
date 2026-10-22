@@ -40,37 +40,24 @@ def code_index(items):
     return idx
 
 
-def _paths(toko_dir):
-    return os.path.join(toko_dir, "hpp.json"), os.path.join(toko_dir, "hpp_map.json")
-
-
-def load(toko_dir):
-    p, pm = _paths(toko_dir)
-    master = {"items": [], "extra": [], "col": "hpp", "source": "", "updated": ""}
-    mapping = {}
-    if os.path.exists(p):
-        with open(p) as fh:
-            master.update(json.load(fh))
+def load(toko):
+    """Master HPP + pemetaan dari database. `toko` = nama toko."""
+    import db
+    master, mapping = db.hpp_load(toko)
     # item manual (bukan dari sheet) digabung; nama sama → manual menang
     if master.get("extra"):
         names = {e["name"] for e in master["extra"]}
         master["items"] = [i for i in master["items"] if i["name"] not in names] + [dict(e, manual=True) for e in master["extra"]]
-    if os.path.exists(pm):
-        with open(pm) as fh:
-            mapping = json.load(fh)
     return master, mapping
 
 
-def save(toko_dir, master=None, mapping=None):
-    p, pm = _paths(toko_dir)
+def save(toko, master=None, mapping=None):
+    import db
     if master is not None:
         m = dict(master)
         m["items"] = [i for i in m.get("items", []) if not i.get("manual")]
-        with open(p, "w") as fh:
-            json.dump(m, fh, ensure_ascii=False, indent=1)
-    if mapping is not None:
-        with open(pm, "w") as fh:
-            json.dump(mapping, fh, ensure_ascii=False, indent=1)
+        master = m
+    db.hpp_save(toko, master=master, mapping=mapping)
 
 
 # ---------------------------------------------------------------- impor
