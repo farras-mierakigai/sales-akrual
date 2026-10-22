@@ -472,7 +472,7 @@ def index(request: Request):
             resp = RedirectResponse("/login?err=" + quote("Workspace ini dinonaktifkan. Hubungi farras@mierakigai.com."), status_code=303)
             resp.delete_cookie(auth.COOKIE, path="/")
             return resp
-    if auth.is_local() or u:
+    if (auth.is_local() or u) and "lp" not in request.query_params:   # ?lp=1 = pratinjau landing page saat sudah login
         return FileResponse(os.path.join(ROOT, "static", "index.html"), headers=NO_STORE)
     # pengunjung yang belum masuk → landing page produk
     return FileResponse(os.path.join(ROOT, "static", "landing.html"), headers=NO_STORE)
