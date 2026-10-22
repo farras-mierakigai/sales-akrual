@@ -111,6 +111,7 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
     <button data-tab="iklan">Iklan</button>
     <button data-tab="audit">Audit</button>
     <button data-tab="data">Data & file</button>
+    <button data-tab="ws" id="tabWs" style="display:none">Workspace</button>
   </div>
 
   <!-- RINGKASAN -->
@@ -222,6 +223,14 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
   </div>
 
   <!-- DATA -->
+  <div class="panel" id="p-ws">
+    <div class="card">
+      <h2>Semua workspace (database pelanggan)</h2>
+      <div class="desc">Hanya superadmin. Setiap pendaftar lewat Google = satu workspace. <b>Nonaktifkan</b> = anggotanya tidak bisa masuk sampai diaktifkan lagi (data tetap ada). <b>Hapus</b> = semua toko, file, dan anggota workspace itu dihapus permanen.</div>
+      <div class="row"><input type="search" id="wsSearch" placeholder="cari nama / email / bisnis / kota" style="min-width:260px"><button class="ghost" id="btnWsReload">muat ulang</button><a class="ghost" id="btnWsXlsx" href="/api/admin/workspaces.xlsx" style="display:inline-block;padding:7px 12px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:var(--ink2);font-weight:600">⬇ Excel pelanggan</a><span class="small" id="wsInfo"></span></div>
+      <div class="tblwrap" style="margin-top:10px"><table id="tblWs" class="filelist"></table></div>
+    </div>
+  </div>
   <div class="panel" id="p-data">
     <div class="grid2">
       <div class="card">
@@ -282,8 +291,25 @@ async function loadMe(){
   $('#btnDelToko').style.display = ME.role==='admin' ? '' : 'none';
   if(!ME.local){ $('#userbox').style.display='flex'; $('#meName').textContent=ME.display_name||ME.user; $('#meRole').textContent=ME.role; $('#meWs').textContent=(ME.workspace&&ME.workspace.name)||''; if(ME.picture){ const im=$('#mePic'); im.src=ME.picture; im.style.display=''; } }
   if(!ME.local && ME.role==='admin'){ $('#usersCard').style.display=''; $('#wsName').textContent=(ME.workspace&&ME.workspace.name)||''; $('#appUrl').textContent=location.origin; loadUsers(); }
+  if(!ME.local && ME.superadmin){ $('#tabWs').style.display=''; loadWs(); }
   if(new URLSearchParams(location.search).get('welcome')){ history.replaceState(null,'','/'); toast('Selamat datang! Workspace kamu sudah dibuat — mulai dengan membuat toko di tab Data & file.', 7000); }
 }
+// ---------- superadmin: semua workspace
+let WS_ALL = [];
+async function loadWs(){
+  try{ WS_ALL = await api('/api/admin/workspaces'); renderWs(); }catch(e){ $('#tblWs').innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; }
+}
+function renderWs(){
+  const q=($('#wsSearch').value||'').toLowerCase().trim();
+  const rows=WS_ALL.filter(w=>!q||[w.name,w.customer_name,w.email,w.business,w.city,w.owner].join(' ').toLowerCase().includes(q));
+  const d=s=>s?new Date(s).toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'2-digit'}):'–';
+  $('#tblWs').innerHTML='<tr><th>ID</th><th class="l">Workspace</th><th class="l">Pendaftar</th><th class="l">WhatsApp</th><th class="l">Kota</th><th>Anggota</th><th>Toko</th><th>File</th><th class="l">Upload terakhir</th><th class="l">Daftar</th><th class="l">Status</th><th></th></tr>'+
+    rows.map(w=>`<tr><td>${w.id}</td><td class="l"><b>${esc(w.name)}</b>${w.business&&w.business!==w.name?`<div class="small">${esc(w.business)}</div>`:''}</td><td class="l">${esc(w.customer_name||'–')}<div class="small">${esc(w.email)}</div></td><td class="l">${w.phone?`<a href="https://wa.me/${esc(w.phone)}" target="_blank">${esc(w.phone)}</a>`:'–'}</td><td class="l">${esc(w.city||'–')}</td><td>${w.members}</td><td>${w.toko}</td><td>${w.files}</td><td class="l">${d(w.last_upload)}</td><td class="l">${d(w.created)}</td><td class="l"><span class="pill ${w.status==='active'?'ok':'bad'}">${w.status==='active'?'aktif':'nonaktif'}</span></td><td>${w.id===1?'<span class="muted small">utama</span>':`<button class="ghost" onclick="wsStatus(${w.id},'${w.status==='active'?'suspended':'active'}')">${w.status==='active'?'nonaktifkan':'aktifkan'}</button> <button class="ghost" onclick="wsDel(${w.id},${JSON.stringify(w.name)})">hapus</button>`}</td></tr>`).join('');
+  $('#wsInfo').textContent=`${rows.length} dari ${WS_ALL.length} workspace · ${WS_ALL.filter(w=>w.status==='active').length} aktif`;
+}
+async function wsStatus(id,status){ try{ await post('/api/admin/workspace/status',{id,status}); toast(status==='active'?'workspace diaktifkan':'workspace dinonaktifkan'); loadWs(); }catch(e){ toast('gagal: '+e.message); } }
+async function wsDel(id,name){ if(!confirm('HAPUS PERMANEN workspace "'+name+'" beserta semua toko, file, dan anggotanya?')) return; if(prompt('Ketik nama workspace untuk konfirmasi:')!==name) return toast('nama tidak cocok, dibatalkan'); try{ await api('/api/admin/workspace?id='+id,{method:'DELETE'}); toast('workspace dihapus'); loadWs(); }catch(e){ toast('gagal: '+e.message); } }
+$('#wsSearch').oninput=renderWs; $('#btnWsReload').onclick=loadWs;
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function loadUsers(){
   const tb=$('#tblUsers');

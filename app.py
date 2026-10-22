@@ -30,7 +30,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
 NO_STORE = {"Cache-Control": "no-store, max-age=0"}
 PUBLIC_PATHS = {"/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz",
-                "/privacy", "/terms"}
+                "/privacy", "/terms", "/daftar", "/daftar/lengkapi", "/api/signup/pending", "/api/signup/complete"}
 OAUTH_COOKIE = "sa_oauth"
 
 
@@ -55,9 +55,24 @@ async def require_login(request: Request, call_next):
         if path.startswith("/api/"):
             return JSONResponse({"detail": "belum login"}, status_code=401, headers=NO_STORE)
         return RedirectResponse("/login", status_code=303)
+    ws = db.ws_get(user["workspace_id"])
+    if ws and ws.get("status") == "suspended":
+        msg = "Workspace ini dinonaktifkan. Hubungi farras@mierakigai.com."
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": msg}, status_code=403, headers=NO_STORE)
+        resp = RedirectResponse("/login?err=" + quote(msg), status_code=303)
+        resp.delete_cookie(auth.COOKIE, path="/")
+        return resp
     request.state.user = user
     db.set_ws(user["workspace_id"])    # semua query data di request ini terkunci ke workspace pemakai
     return await call_next(request)
+
+
+def require_superadmin(request: Request):
+    u = current_user(request)
+    if not auth.is_superadmin(u):
+        raise HTTPException(403, "hanya superadmin")
+    return u
 
 
 def require_admin(request: Request):
@@ -121,40 +136,170 @@ def api_login_config():
 
 
 @app.get("/auth/google")
-def auth_google(request: Request):
+def auth_google(request: Request, mode: str = "login"):
+    """mode=login: hanya akun yang sudah ada / diundang. mode=signup: email baru diarahkan ke form data diri."""
     if auth.is_local() or current_user(request):
         return RedirectResponse("/", status_code=303)
+    mode = "signup" if mode == "signup" else "login"
+    back = "/daftar" if mode == "signup" else "/login"
     if not auth.google_enabled():
-        return RedirectResponse("/login?err=" + quote("masuk dengan Google belum diaktifkan"), status_code=303)
+        return RedirectResponse(back + "?err=" + quote("masuk dengan Google belum diaktifkan"), status_code=303)
     state = secrets.token_urlsafe(24)
     resp = RedirectResponse(auth.google_auth_url(state), status_code=303)
-    resp.set_cookie(OAUTH_COOKIE, state, max_age=600, httponly=True, samesite="lax", secure=_secure_cookie(request), path="/auth/")
+    resp.set_cookie(OAUTH_COOKIE, f"{state}|{mode}", max_age=600, httponly=True, samesite="lax", secure=_secure_cookie(request), path="/auth/")
+    return resp
+
+
+def _set_session(resp, request, tok):
+    resp.set_cookie(auth.COOKIE, tok, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=_secure_cookie(request), path="/")
     return resp
 
 
 @app.get("/auth/google/callback")
 def auth_google_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
-    def fail(msg):
-        r = RedirectResponse("/login?err=" + quote(msg), status_code=303)
+    expect, _, mode = request.cookies.get(OAUTH_COOKIE, "").partition("|")
+    back = "/daftar" if mode == "signup" else "/login"
+
+    def fail(msg, to=None):
+        r = RedirectResponse((to or back) + "?err=" + quote(msg), status_code=303)
         r.delete_cookie(OAUTH_COOKIE, path="/auth/")
         return r
     if error or not code:
         return fail("masuk dengan Google dibatalkan")
-    expect = request.cookies.get(OAUTH_COOKIE, "")
     if not state or not expect or not secrets.compare_digest(state, expect):
         return fail("sesi masuk kedaluwarsa — coba lagi")
     try:
         profile = auth.google_fetch_profile(code)
-        tok, status = auth.google_login(profile)
+        tok, status = auth.google_login(profile, allow_create=False)
     except (PermissionError, ValueError) as e:
         return fail(str(e))
     except Exception:
         return fail("gagal menghubungi Google — coba lagi")
-    resp = RedirectResponse("/" + ("?welcome=1" if status == "created" else ""), status_code=303)
+    if status == "new":
+        if mode != "signup":
+            return fail("Email ini belum terdaftar. Silakan daftar dulu.", "/daftar")
+        resp = RedirectResponse("/daftar/lengkapi", status_code=303)
+        resp.delete_cookie(OAUTH_COOKIE, path="/auth/")
+        resp.set_cookie(auth.SIGNUP_COOKIE, auth.make_pending(profile), max_age=auth.SIGNUP_MINUTES * 60, httponly=True,
+                        samesite="lax", secure=_secure_cookie(request), path="/")
+        return resp
+    resp = RedirectResponse("/", status_code=303)
     resp.delete_cookie(OAUTH_COOKIE, path="/auth/")
-    resp.set_cookie(auth.COOKIE, tok, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax",
-                    secure=_secure_cookie(request), path="/")
-    return resp
+    return _set_session(resp, request, tok)
+
+
+# ---------------------------------------------------------------- pendaftaran (form data diri)
+
+@app.get("/daftar")
+def signup_page(request: Request):
+    if auth.is_local() or current_user(request):
+        return RedirectResponse("/", status_code=303)
+    return FileResponse(os.path.join(ROOT, "static", "daftar.html"), headers=NO_STORE)
+
+
+@app.get("/daftar/lengkapi")
+def signup_form_page(request: Request):
+    if auth.is_local() or current_user(request):
+        return RedirectResponse("/", status_code=303)
+    if not auth.read_pending(request.cookies.get(auth.SIGNUP_COOKIE, "")):
+        return RedirectResponse("/daftar?err=" + quote("sesi pendaftaran habis — klik Daftar dengan Google lagi"), status_code=303)
+    return FileResponse(os.path.join(ROOT, "static", "lengkapi.html"), headers=NO_STORE)
+
+
+@app.get("/api/signup/pending")
+def api_signup_pending(request: Request):
+    p = auth.read_pending(request.cookies.get(auth.SIGNUP_COOKIE, ""))
+    if not p:
+        raise HTTPException(401, "sesi pendaftaran habis")
+    return JSONResponse(dict(name=p["name"], email=p["email"], picture=p["picture"]), headers=NO_STORE)
+
+
+class SignupIn(BaseModel):
+    name: str
+    phone: str
+    business: str
+    city: str
+    agree: bool = False
+
+
+@app.post("/api/signup/complete")
+def api_signup_complete(body: SignupIn, request: Request):
+    p = auth.read_pending(request.cookies.get(auth.SIGNUP_COOKIE, ""))
+    if not p:
+        raise HTTPException(401, "sesi pendaftaran habis — klik Daftar dengan Google lagi")
+    if not body.agree:
+        raise HTTPException(400, "centang persetujuan Ketentuan Layanan & Kebijakan Privasi")
+    try:
+        tok, status = auth.signup_complete(p, body.dict())
+    except (ValueError, PermissionError) as e:
+        raise HTTPException(400, str(e))
+    resp = JSONResponse(dict(ok=True, status=status), headers=NO_STORE)
+    resp.delete_cookie(auth.SIGNUP_COOKIE, path="/")
+    return _set_session(resp, request, tok)
+
+
+# ---------------------------------------------------------------- superadmin: semua workspace (database pelanggan)
+
+@app.get("/api/admin/workspaces")
+def api_admin_workspaces(request: Request):
+    require_superadmin(request)
+    return db.ws_list_all()
+
+
+class WsStatusIn(BaseModel):
+    id: int
+    status: str
+
+
+@app.post("/api/admin/workspace/status")
+def api_admin_ws_status(body: WsStatusIn, request: Request):
+    require_superadmin(request)
+    if body.id == db.DEFAULT_WS:
+        raise HTTPException(400, "workspace utama tidak bisa dinonaktifkan")
+    try:
+        db.ws_set_status(body.id, body.status)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True)
+
+
+@app.delete("/api/admin/workspace")
+def api_admin_ws_delete(id: int, request: Request):
+    require_superadmin(request)
+    if not db.ws_get(id):
+        raise HTTPException(404, "workspace tidak ada")
+    try:
+        db.ws_delete(id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    with _lock:
+        for k in [k for k in _cache if k[0] == id]:
+            _cache.pop(k, None)
+    return dict(ok=True)
+
+
+@app.get("/api/admin/workspaces.xlsx")
+def api_admin_workspaces_xlsx(request: Request):
+    require_superadmin(request)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Pelanggan"
+    cols = [("id", "ID"), ("name", "Workspace"), ("status", "Status"), ("customer_name", "Nama"), ("email", "Email"),
+            ("phone", "WhatsApp"), ("business", "Bisnis / toko"), ("city", "Kota"), ("members", "Anggota"), ("toko", "Toko"),
+            ("files", "File"), ("last_upload", "Upload terakhir"), ("created", "Daftar")]
+    ws.append([h for _, h in cols])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for r in db.ws_list_all():
+        ws.append([r[k] for k, _ in cols])
+    for i, (k, _) in enumerate(cols, 1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = 14 if k in ("id", "status", "members", "toko", "files") else 26
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": 'attachment; filename="Pelanggan Sales Akrual.xlsx"'})
 
 
 @app.get("/api/me")
@@ -163,7 +308,8 @@ def api_me(request: Request):
     ws = db.ws_get(u["workspace_id"]) or dict(id=u["workspace_id"], name="")
     return JSONResponse(dict(user=u["name"], role=u["role"], local=auth.is_local(), mode=auth.mode(),
                              email=u.get("email", ""), display_name=u.get("display_name") or u["name"], picture=u.get("picture", ""),
-                             google=u.get("google", False), workspace=dict(id=ws["id"], name=ws["name"])), headers=NO_STORE)
+                             google=u.get("google", False), superadmin=auth.is_superadmin(u),
+                             workspace=dict(id=ws["id"], name=ws["name"])), headers=NO_STORE)
 
 
 class WsIn(BaseModel):

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lengkapi data diri — Sales Akrual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#FFFFFF;--bg2:#F6F3FF;--lav:#EDE7FF;--ink:#1E1E1E;--ink2:#5B5B6B;--muted:#8A8A99;--line:#E6E3F0;--line2:#1E1E1E;--orange:#F4561E;--purple:#5E1AF1;--purple-dk:#340E7C;--bad:#C62828;--radius:10px;--shadow:5px 5px 10px rgba(0,0,0,.08)}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:linear-gradient(160deg,var(--lav),#fff 60%);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,sans-serif;font-size:14px;line-height:1.45}
+.box{max-width:460px;margin:6vh auto 24px;padding:0 16px}
+.card{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:24px 22px;box-shadow:var(--shadow)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.logo{width:38px;height:38px;border-radius:8px;background:var(--purple-dk);display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px}
+h1{font-size:18px;margin:0;font-weight:800}
+.sub{color:var(--ink2);font-size:12px}
+.who{display:flex;align-items:center;gap:10px;background:var(--bg2);border-radius:8px;padding:8px 10px;margin:4px 0 6px;font-size:13px}
+.who img{width:30px;height:30px;border-radius:50%}
+.who .e{color:var(--ink2);font-size:12px}
+label{display:block;font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px}
+input{font:inherit;width:100%;padding:9px 11px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--ink)}
+input:disabled{background:var(--bg2);color:var(--ink2)}
+.hint{color:var(--muted);font-size:11px;margin-top:3px}
+.agree{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--ink2);margin-top:14px}
+.agree input{width:auto;margin-top:2px}
+.agree a{color:var(--purple)}
+button{font:inherit;font-weight:700;width:100%;margin-top:16px;padding:10px 14px;border-radius:6px;border:1px solid var(--orange);background:var(--orange);color:#fff;cursor:pointer;box-shadow:var(--shadow)}
+button:disabled{opacity:.6;cursor:default}
+.err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
+.foot{color:var(--muted);font-size:12px;text-align:center;margin-top:14px}
+.foot a{color:var(--purple)}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="card">
+    <div class="brand"><div class="logo">MKG</div><div><h1>Lengkapi data diri</h1><div class="sub">Langkah terakhir sebelum workspace kamu dibuat</div></div></div>
+    <div class="who"><img id="pic" alt="" style="display:none"><div><div id="gname"></div><div class="e" id="gemail"></div></div></div>
+    <form id="f" autocomplete="on">
+      <label for="name">Nama lengkap</label>
+      <input id="name" name="name" autocomplete="name" required minlength="2" maxlength="120">
+      <label for="phone">Nomor WhatsApp</label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="08xxxxxxxxxx" required>
+      <div class="hint">Dipakai untuk bantuan onboarding, bukan promosi.</div>
+      <label for="business">Nama bisnis / toko</label>
+      <input id="business" name="business" autocomplete="organization" placeholder="mis. Eltahj Official" required minlength="2" maxlength="120">
+      <div class="hint">Jadi nama workspace kamu. Bisa diganti nanti.</div>
+      <label for="city">Kota</label>
+      <input id="city" name="city" autocomplete="address-level2" placeholder="mis. Bandung" required minlength="2" maxlength="80">
+      <label class="agree"><input type="checkbox" id="agree"> <span>Saya setuju dengan <a href="/terms" target="_blank">Ketentuan Layanan</a> dan <a href="/privacy" target="_blank">Kebijakan Privasi</a>.</span></label>
+      <button id="b" type="submit">Buat workspace saya</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+  <div class="foot">Salah akun Google? <a href="/daftar">Ulangi pendaftaran</a></div>
+</div>
+<script>
+(async () => {
+  try {
+    const r = await fetch('/api/signup/pending');
+    if (!r.ok) { location.href = '/daftar?err=' + encodeURIComponent('sesi pendaftaran habis — klik Daftar dengan Google lagi'); return; }
+    const p = await r.json();
+    document.getElementById('gname').textContent = p.name || '';
+    document.getElementById('gemail').textContent = p.email || '';
+    if (p.picture) { const im = document.getElementById('pic'); im.src = p.picture; im.style.display = ''; }
+    if (p.name && !document.getElementById('name').value) document.getElementById('name').value = p.name;
+    document.getElementById('phone').focus();
+  } catch (_) {}
+})();
+document.getElementById('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const b = document.getElementById('b'), err = document.getElementById('err');
+  b.disabled = true; err.textContent = '';
+  try {
+    const body = {name: document.getElementById('name').value, phone: document.getElementById('phone').value,
+                  business: document.getElementById('business').value, city: document.getElementById('city').value,
+                  agree: document.getElementById('agree').checked};
+    const r = await fetch('/api/signup/complete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m } catch(_){} throw new Error(m); }
+    const j = await r.json();
+    location.href = j.status === 'created' ? '/?welcome=1' : '/';
+  } catch (e2) { err.textContent = e2.message; b.disabled = false; }
+};
+</script>
+</body>
+</html>

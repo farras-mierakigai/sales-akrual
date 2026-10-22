@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daftar — Sales Akrual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#FFFFFF;--bg2:#F6F3FF;--lav:#EDE7FF;--ink:#1E1E1E;--ink2:#5B5B6B;--muted:#8A8A99;--line:#E6E3F0;--line2:#1E1E1E;--orange:#F4561E;--purple:#5E1AF1;--purple-dk:#340E7C;--bad:#C62828;--radius:10px;--shadow:5px 5px 10px rgba(0,0,0,.08)}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:linear-gradient(160deg,var(--lav),#fff 60%);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,sans-serif;font-size:14px;line-height:1.45}
+.box{max-width:420px;margin:10vh auto 0;padding:0 16px}
+.card{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:24px 22px;box-shadow:var(--shadow)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.logo{width:38px;height:38px;border-radius:8px;background:var(--purple-dk);display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px}
+h1{font-size:18px;margin:0;font-weight:800}
+.sub{color:var(--ink2);font-size:12px}
+ol{margin:0 0 18px;padding-left:20px;color:var(--ink2);font-size:13px}
+ol li{margin:4px 0}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px 14px;border:1px solid var(--orange);border-radius:6px;background:var(--orange);color:#fff;font-weight:700;text-decoration:none;box-shadow:var(--shadow)}
+.gbtn:hover{filter:brightness(1.05)}
+.gbtn svg{width:18px;height:18px;background:#fff;border-radius:50%;padding:2px}
+.err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
+.foot{color:var(--muted);font-size:12px;text-align:center;margin-top:14px}
+.foot a{color:var(--purple);font-weight:700}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="card">
+    <div class="brand"><div class="logo">MKG</div><div><h1>Daftar Sales Akrual</h1><div class="sub">Gratis, cukup akun Google</div></div></div>
+    <ol>
+      <li>Klik <b>Daftar dengan Google</b> dan pilih akun Google kamu.</li>
+      <li>Lengkapi data diri singkat (nama, WhatsApp, nama bisnis, kota).</li>
+      <li>Workspace kamu langsung siap — upload export Shopee / TikTok / Tokopedia dan klik Hitung.</li>
+    </ol>
+    <a class="gbtn" id="g" href="/auth/google?mode=signup"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.3 0 11.7-2.1 15.6-5.7l-7.7-6c-2.1 1.4-4.8 2.3-7.9 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg><span>Daftar dengan Google</span></a>
+    <div class="err" id="err"></div>
+  </div>
+  <div class="foot">Sudah punya akun? <a href="/login">Masuk</a></div>
+  <div class="foot"><a href="/privacy" style="color:inherit;font-weight:400">Kebijakan Privasi</a> · <a href="/terms" style="color:inherit;font-weight:400">Ketentuan Layanan</a></div>
+</div>
+<script>
+(async () => {
+  const q = new URLSearchParams(location.search);
+  if (q.get('err')) document.getElementById('err').textContent = q.get('err');
+  try {
+    const cfg = await (await fetch('/api/login-config')).json();
+    if (!cfg.google) { document.getElementById('g').style.display = 'none'; document.getElementById('err').textContent = 'Pendaftaran mandiri belum dibuka. Hubungi admin untuk dibuatkan akun.'; }
+  } catch (_) {}
+})();
+</script>
+</body>
+</html>

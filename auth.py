@@ -199,14 +199,20 @@ def google_fetch_profile(code):
         return p.json()
 
 
-def google_login(profile):
-    """Masuk/daftar dari profil Google → (token, status) dengan status 'login' | 'joined' | 'created'."""
+def _profile_fields(profile):
     sub = str(profile.get("sub") or "")
     email = norm_email(profile.get("email"))
     if not sub or not profile.get("email_verified", False):
         raise PermissionError("email Google belum terverifikasi")
     display = (profile.get("name") or email.split("@")[0]).strip()[:120]
     picture = (profile.get("picture") or "")[:1000]
+    return sub, email, display, picture
+
+
+def google_login(profile, allow_create=True):
+    """Masuk dari profil Google → (token, status): 'login' (sudah ada), 'joined' (diundang), 'created' (workspace baru,
+    hanya kalau allow_create), atau (None, 'new') kalau email belum terdaftar dan allow_create=False → harus lewat form daftar."""
+    sub, email, display, picture = _profile_fields(profile)
     with _lock:
         users = load_users()
         # 1. sudah pernah masuk (cocokkan sub, lalu email) → login
@@ -217,17 +223,95 @@ def google_login(profile):
             u.update(google_sub=sub, email=email, display_name=display, picture=picture)
             db.user_upsert(hit, u)
             return make_token(hit), "login"
-        # 2. diundang ke workspace yang sudah ada → jadi anggota
+        # 2. diundang ke workspace yang sudah ada → jadi anggota (tanpa form)
         inv = db.invite_pop(email)
         if inv and db.ws_get(inv["workspace_id"]):
             ws, role, status = inv["workspace_id"], inv["role"], "joined"
         # 3. pendaftar baru → workspace sendiri, dia admin
-        else:
+        elif allow_create:
             ws = db.ws_create(display or email, email)
             role, status = "admin", "created"
+        else:
+            return None, "new"
         db.user_upsert(email, dict(hash="", role=role, created=int(time.time()), workspace_id=ws, email=email,
                                    google_sub=sub, display_name=display, picture=picture))
         return make_token(email), status
+
+
+def norm_phone(phone):
+    p = "".join(c for c in (phone or "") if c.isdigit() or c == "+").strip()
+    if p.startswith("+"):
+        p = p[1:]
+    if p.startswith("0"):
+        p = "62" + p[1:]
+    if not (8 <= len(p) <= 16) or not p.isdigit():
+        raise ValueError("nomor WhatsApp tidak valid")
+    return p
+
+
+def signup_complete(profile, form):
+    """Selesaikan pendaftaran: profil Google (dari cookie pending) + form data diri → workspace baru + akun admin + data pelanggan.
+    form: dict(name, phone, business, city). Kalau email ternyata sudah terdaftar (mis. daftar dua kali), langsung login."""
+    sub, email, display, picture = _profile_fields(profile)
+    name = (form.get("name") or display).strip()[:120]
+    business = (form.get("business") or "").strip()[:120]
+    city = (form.get("city") or "").strip()[:80]
+    if len(name) < 2:
+        raise ValueError("nama lengkap wajib diisi")
+    if len(business) < 2:
+        raise ValueError("nama bisnis / toko wajib diisi")
+    if len(city) < 2:
+        raise ValueError("kota wajib diisi")
+    phone = norm_phone(form.get("phone"))
+    with _lock:
+        users = load_users()
+        hit = next((k for k, v in users.items() if v.get("google_sub") == sub or v.get("email") == email), None)
+        if hit:
+            return make_token(hit), "login"
+        ws = db.ws_create(business, email)
+        db.user_upsert(email, dict(hash="", role="admin", created=int(time.time()), workspace_id=ws, email=email,
+                                   google_sub=sub, display_name=name, picture=picture))
+        db.customer_save(ws, name=name, email=email, phone=phone, business=business, city=city)
+        return make_token(email), "created"
+
+
+# cookie pendaftaran sementara: profil Google yang sudah diverifikasi, menunggu form data diri (15 menit)
+SIGNUP_COOKIE = "sa_signup"
+SIGNUP_MINUTES = 15
+
+
+def make_pending(profile):
+    sub, email, display, picture = _profile_fields(profile)
+    body = json.dumps(dict(sub=sub, email=email, name=display, picture=picture, exp=int(time.time()) + SIGNUP_MINUTES * 60),
+                      separators=(",", ":"))
+    sig = hmac.new(_secret(), body.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{body}|{sig}".encode()).decode()
+
+
+def read_pending(token):
+    """→ profil Google (dict dengan email_verified=True) atau None kalau tidak ada / kedaluwarsa / dipalsukan."""
+    try:
+        body, sig = base64.urlsafe_b64decode(token.encode()).decode().rsplit("|", 1)
+        if not hmac.compare_digest(hmac.new(_secret(), body.encode(), hashlib.sha256).hexdigest(), sig):
+            return None
+        p = json.loads(body)
+        if int(p.get("exp", 0)) < time.time():
+            return None
+        return dict(sub=p["sub"], email=p["email"], name=p.get("name", ""), picture=p.get("picture", ""), email_verified=True)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- superadmin (pemilik platform)
+
+def superadmin_name():
+    return norm_name(os.environ.get("SA_SUPERADMIN") or os.environ.get("SA_ADMIN_USER") or "")
+
+
+def is_superadmin(user):
+    """Superadmin = akun yang ditunjuk env SA_SUPERADMIN (default: SA_ADMIN_USER) di workspace utama."""
+    return bool(user) and user.get("name") == superadmin_name() and int(user.get("workspace_id", 0)) == db.DEFAULT_WS \
+        and user.get("role") == "admin"
 
 
 def bootstrap_from_env():

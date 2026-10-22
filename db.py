@@ -47,6 +47,20 @@ workspace = Table(
     Column("name", String(120), nullable=False),
     Column("owner", String(254), nullable=False, default=""),      # app_user.name pemilik
     Column("created_at", DateTime, nullable=False),
+    Column("status", String(16), nullable=False, default="active"),   # active | suspended
+)
+
+# data diri pendaftar (satu per workspace) — database pelanggan untuk superadmin
+customer = Table(
+    "customer", meta,
+    Column("id", Integer, primary_key=True),
+    Column("workspace_id", Integer, nullable=False, unique=True),
+    Column("name", String(120), nullable=False, default=""),
+    Column("email", String(254), nullable=False, default=""),
+    Column("phone", String(32), nullable=False, default=""),
+    Column("business", String(120), nullable=False, default=""),
+    Column("city", String(80), nullable=False, default=""),
+    Column("created_at", DateTime, nullable=False),
 )
 
 ws_invite = Table(
@@ -212,6 +226,9 @@ def _migrate_schema(eng):
         cols_toko = {c["name"] for c in sa.inspect(cx).get_columns("toko")}
         if "workspace_id" not in cols_toko:
             run(cx, f"ALTER TABLE toko ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT {DEFAULT_WS}")
+        cols_ws = {c["name"] for c in sa.inspect(cx).get_columns("workspace")}
+        if "status" not in cols_ws:
+            run(cx, "ALTER TABLE workspace ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active'")
         cols_user = {c["name"] for c in sa.inspect(cx).get_columns("app_user")}
         for col, ddl in (("workspace_id", f"INTEGER NOT NULL DEFAULT {DEFAULT_WS}"), ("email", "VARCHAR(254) NOT NULL DEFAULT ''"),
                          ("google_sub", "VARCHAR(64) NOT NULL DEFAULT ''"), ("display_name", "VARCHAR(120) NOT NULL DEFAULT ''"),
@@ -614,6 +631,64 @@ def ws_get(ws_id):
 def ws_rename(ws_id, name):
     with engine().begin() as cx:
         cx.execute(update(workspace).where(workspace.c.id == int(ws_id)).values(name=name))
+
+
+def ws_set_status(ws_id, status):
+    if status not in ("active", "suspended"):
+        raise ValueError("status harus active atau suspended")
+    with engine().begin() as cx:
+        cx.execute(update(workspace).where(workspace.c.id == int(ws_id)).values(status=status))
+
+
+def customer_save(ws_id, name="", email="", phone="", business="", city=""):
+    with engine().begin() as cx:
+        cx.execute(delete(customer).where(customer.c.workspace_id == int(ws_id)))
+        cx.execute(insert(customer).values(workspace_id=int(ws_id), name=name, email=email, phone=phone, business=business,
+                                           city=city, created_at=dt.datetime.now()))
+
+
+def ws_list_all():
+    """Semua workspace + data diri pendaftar + jumlah anggota/toko/file (untuk tab Workspace superadmin)."""
+    with engine().connect() as cx:
+        rows = cx.execute(select(workspace).order_by(workspace.c.id)).mappings().all()
+        cust = {r["workspace_id"]: dict(r) for r in cx.execute(select(customer)).mappings().all()}
+        members = dict(cx.execute(select(app_user.c.workspace_id, func.count()).group_by(app_user.c.workspace_id)).all())
+        tokos = dict(cx.execute(select(toko.c.workspace_id, func.count()).group_by(toko.c.workspace_id)).all())
+        files = dict(cx.execute(select(toko.c.workspace_id, func.count(upload.c.id))
+                                .select_from(toko.join(upload, upload.c.toko_id == toko.c.id)).group_by(toko.c.workspace_id)).all())
+        last = dict(cx.execute(select(toko.c.workspace_id, func.max(upload.c.uploaded_at))
+                               .select_from(toko.join(upload, upload.c.toko_id == toko.c.id)).group_by(toko.c.workspace_id)).all())
+    out = []
+    for r in rows:
+        c = cust.get(r["id"], {})
+        out.append(dict(id=r["id"], name=r["name"], owner=r["owner"], status=r["status"], created=r["created_at"].isoformat(),
+                        customer_name=c.get("name", ""), email=c.get("email", "") or r["owner"], phone=c.get("phone", ""),
+                        business=c.get("business", ""), city=c.get("city", ""),
+                        members=int(members.get(r["id"], 0)), toko=int(tokos.get(r["id"], 0)), files=int(files.get(r["id"], 0)),
+                        last_upload=last[r["id"]].isoformat() if last.get(r["id"]) else ""))
+    return out
+
+
+def ws_delete(ws_id):
+    """Hapus workspace beserta semua toko, data, anggota, undangan, dan arsip filenya."""
+    import shutil
+    ws_id = int(ws_id)
+    if ws_id == DEFAULT_WS:
+        raise ValueError("workspace utama tidak bisa dihapus")
+    prev = current_ws()
+    set_ws(ws_id)
+    try:
+        for name in list_toko():
+            delete_toko(name)
+            shutil.rmtree(archive_dir(name), ignore_errors=True)
+        shutil.rmtree(os.path.join(DATA, "_ws", str(ws_id)), ignore_errors=True)
+    finally:
+        set_ws(prev)
+    with engine().begin() as cx:
+        cx.execute(delete(app_user).where(app_user.c.workspace_id == ws_id))
+        cx.execute(delete(ws_invite).where(ws_invite.c.workspace_id == ws_id))
+        cx.execute(delete(customer).where(customer.c.workspace_id == ws_id))
+        cx.execute(delete(workspace).where(workspace.c.id == ws_id))
 
 
 def ws_members(ws_id):

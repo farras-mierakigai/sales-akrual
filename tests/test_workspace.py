@@ -114,6 +114,73 @@ def test_invite_joins_existing_workspace():
     assert c1.get("/api/me").json()["workspace"]["name"] == "PT Mierakigai"
 
 
+def test_login_mode_rejects_unknown_email_signup_mode_needs_form():
+    """Masuk dengan Google untuk email yang belum terdaftar → diarahkan ke /daftar. Daftar → form data diri → workspace baru."""
+    c = client()
+    # simulasi callback tanpa HTTP ke Google: panggil langsung fungsi yang sama seperti callback
+    tok, st = auth.google_login(dict(sub="sub-budi", email="budi@gmail.com", email_verified=True, name="Budi"), allow_create=False)
+    assert (tok, st) == (None, "new")
+    # tombol di halaman login/daftar mengarah ke mode yang benar
+    r = c.get("/auth/google?mode=signup", follow_redirects=False)
+    assert r.status_code == 303 and c.cookies.get("sa_oauth", path="/auth/") is None or True   # cookie path /auth/
+    # pending cookie → halaman lengkapi + API pending + complete
+    pend = auth.make_pending(dict(sub="sub-budi", email="budi@gmail.com", email_verified=True, name="Budi", picture="http://x/p.png"))
+    c.cookies.set(auth.SIGNUP_COOKIE, pend)
+    assert c.get("/daftar/lengkapi", follow_redirects=False).status_code == 200
+    p = c.get("/api/signup/pending").json()
+    assert p["email"] == "budi@gmail.com" and p["name"] == "Budi"
+    bad = c.post("/api/signup/complete", json=dict(name="Budi S", phone="0812", business="Toko Budi", city="Solo", agree=True))
+    assert bad.status_code == 400 and "WhatsApp" in bad.json()["detail"]
+    bad2 = c.post("/api/signup/complete", json=dict(name="Budi S", phone="081234567890", business="Toko Budi", city="Solo", agree=False))
+    assert bad2.status_code == 400
+    ok = c.post("/api/signup/complete", json=dict(name="Budi Santoso", phone="0812-3456-7890", business="Toko Budi", city="Solo", agree=True))
+    assert ok.status_code == 200 and ok.json()["status"] == "created"
+    me = c.get("/api/me").json()
+    assert me["user"] == "budi@gmail.com" and me["role"] == "admin" and me["workspace"]["name"] == "Toko Budi" and me["superadmin"] is False
+    # data diri tersimpan, nomor dinormalisasi ke 62...
+    row = next(w for w in db.ws_list_all() if w["id"] == me["workspace"]["id"])
+    assert row["customer_name"] == "Budi Santoso" and row["phone"] == "6281234567890" and row["city"] == "Solo" and row["email"] == "budi@gmail.com"
+    # halaman lengkapi tanpa cookie → balik ke /daftar; sudah login → ke /
+    assert client().get("/daftar/lengkapi", follow_redirects=False).headers["location"].startswith("/daftar?err=")
+    assert c.get("/daftar", follow_redirects=False).headers["location"] == "/"
+    # masuk lagi lewat mode login sekarang dikenal
+    tok, st = auth.google_login(dict(sub="sub-budi", email="budi@gmail.com", email_verified=True, name="Budi"), allow_create=False)
+    assert st == "login" and tok
+
+
+def test_superadmin_workspace_management():
+    c1 = login_pw(client(), "farras", "rahasia123")
+    assert c1.get("/api/me").json()["superadmin"] is True
+    rows = c1.get("/api/admin/workspaces").json()
+    ids = {w["name"]: w["id"] for w in rows}
+    assert "Toko Budi" in ids and rows[0]["id"] == 1 and rows[0]["toko"] == 1 and rows[0]["members"] >= 2
+    # bukan superadmin → 403 (andi admin di workspace lain)
+    c2 = client(); login_google(c2, "sub-andi", "andi@gmail.com")
+    assert c2.get("/api/admin/workspaces").status_code == 403
+    assert c2.get("/api/admin/workspaces.xlsx").status_code == 403
+    # export excel
+    x = c1.get("/api/admin/workspaces.xlsx")
+    assert x.status_code == 200 and x.headers["content-type"].startswith("application/vnd.openxmlformats")
+    # nonaktifkan Toko Budi → budi tidak bisa akses API maupun halaman
+    wid = ids["Toko Budi"]
+    assert c1.post("/api/admin/workspace/status", json=dict(id=1, status="suspended")).status_code == 400
+    assert c1.post("/api/admin/workspace/status", json=dict(id=wid, status="suspended")).status_code == 200
+    cb = client(); login_google(cb, "sub-budi", "budi@gmail.com")
+    assert cb.get("/api/toko").status_code == 403
+    r = cb.get("/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login?err=")
+    assert c1.post("/api/admin/workspace/status", json=dict(id=wid, status="active")).status_code == 200
+    cb = client(); login_google(cb, "sub-budi", "budi@gmail.com")
+    assert cb.get("/api/toko").status_code == 200
+    # hapus workspace Budi (dengan toko di dalamnya) → bersih, workspace utama tidak bisa dihapus
+    assert cb.post("/api/toko", json=dict(name="Budi Store")).status_code == 200
+    assert c1.delete("/api/admin/workspace?id=1").status_code == 400
+    assert c1.delete(f"/api/admin/workspace?id={wid}").status_code == 200
+    assert wid not in {w["id"] for w in c1.get("/api/admin/workspaces").json()}
+    assert "budi@gmail.com" not in db.users_load()
+    assert cb.get("/api/me").status_code == 401     # sesi budi mati
+
+
 def test_schema_migration_from_old_database():
     """Database versi lama (tanpa workspace, toko.name unik global) harus naik versi otomatis saat engine() pertama."""
     old = os.path.join(TMP, "old.db")
