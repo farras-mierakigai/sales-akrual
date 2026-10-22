@@ -412,6 +412,7 @@ def hpp_save(name, master=None, mapping=None):
             if recs:
                 cx.execute(insert(hpp_map), recs)
         bump(cx, tid)
+    export_settings(name)
 
 
 # ---------------------------------------------------------------- Iklan
@@ -452,6 +453,25 @@ def ads_save(name, clean):
         if recs:
             cx.execute(insert(ads_month), recs)
         bump(cx, tid)
+    export_settings(name)
+
+
+def export_settings(name):
+    """Tulis hpp.json / hpp_map.json / ads.json ke folder arsip <DATA>/<toko>/ supaya arsip (yang disimpan di git)
+    lengkap untuk membangun ulang database lewat migrate.py. Dipanggil tiap HPP/iklan disimpan."""
+    master, mapping = hpp_load(name)
+    ads = ads_load(name, {"channels": [], "attribution": {}, "months": {}, "notes": "", "prorate": False})
+    d = archive_dir(name)
+    os.makedirs(d, exist_ok=True)
+    def dump(fn, obj):
+        tmp = os.path.join(d, fn + ".tmp")
+        with open(tmp, "w") as fh:
+            json.dump(obj, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, os.path.join(d, fn))
+    dump("hpp.json", {k: v for k, v in master.items() if k != "items"} | {"items": master["items"]})
+    dump("hpp_map.json", mapping)
+    if ads["channels"] or ads["months"]:
+        dump("ads.json", ads)
 
 
 # ---------------------------------------------------------------- pengguna

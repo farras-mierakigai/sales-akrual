@@ -541,9 +541,14 @@ def api_audit_xlsx(toko: str, m_from: Optional[str] = None, m_to: Optional[str] 
 
 
 def _cli(argv):
-    """python3 app.py adduser <nama> [--admin]   |   python3 app.py passwd <nama>   |   python3 app.py users"""
+    """python3 app.py adduser <nama> [--admin] | passwd <nama> | users | export-arsip (tulis hpp/ads JSON ke folder arsip)"""
     import getpass
     cmd = argv[0]
+    if cmd == "export-arsip":
+        for t in db.list_toko():
+            db.export_settings(t)
+            print(f"{t}: hpp.json, hpp_map.json, ads.json ditulis ke {db.archive_dir(t)}")
+        return
     if cmd == "users":
         for u in auth.list_users():
             print(f"{u['name']:20s} {u['role']}")

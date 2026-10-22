@@ -53,12 +53,21 @@ docker compose logs -f app             # tunggu "Uvicorn running"
 
 Buka `https://<SA_DOMAIN>` → login admin → tab **Data & file → Pengguna** untuk membuat akun tim. Tanpa domain: `SA_DOMAIN=:80` lalu buka `http://<IP-VPS>` (tanpa HTTPS — password & data toko lewat jalur polos, hanya untuk uji coba).
 
-### Pindahkan data yang sudah ada di Mac
+### Arsip data = repo git sendiri
+
+Folder `data/` adalah clone repo private **`farras-mierakigai/sales-akrual-data`** (file export per toko + `hpp.json`/`hpp_map.json`/`ads.json`, ditulis otomatis oleh app tiap HPP/iklan disimpan). Database dibangun ulang dari arsip ini dengan `migrate.py`, jadi repo itu = backup lengkap + riwayatnya.
 
 ```bash
-deploy/sync-data.sh user@ip-vps            # rsync arsip data/ Mac → VPS (database lokal & akun tidak ikut)
-ssh user@ip-vps 'cd sales-akrual && docker compose exec app python3 migrate.py'   # parse semua arsip ke Postgres (±1 menit per 50 file)
+# di VPS, sebelum docker compose up: ambil arsip (repo private → butuh token/deploy key GitHub)
+git clone https://github.com/farras-mierakigai/sales-akrual-data.git data
+docker compose exec app python3 migrate.py          # parse semua arsip ke Postgres (±5 menit untuk 150 file)
+
+# backup otomatis: commit + push arsip tiap malam (upload tim lewat app masuk ke data/<toko>/)
+deploy/backup-arsip.sh                              # manual
+crontab -e  →  30 2 * * * /home/<user>/sales-akrual/deploy/backup-arsip.sh >> /home/<user>/backup-arsip.log 2>&1
 ```
+
+Di Mac, `data/` juga clone repo yang sama: `git -C data pull` sebelum kerja, `deploy/backup-arsip.sh` setelah nambah file. Alternatif tanpa git: `deploy/sync-data.sh user@ip-vps` (rsync Mac → VPS).
 
 ### Operasional
 
@@ -131,4 +140,5 @@ Semua bisa diunduh sebagai `Audit Data Penjualan <toko>.xlsx` (sheet per temuan)
 - `app.py` — FastAPI (upload, scan folder [lokal], summary, export, login & pengguna, CLI `adduser`/`passwd`/`users`)
 - `auth.py` — akun & sesi mode server (PBKDF2 + cookie HMAC)
 - `static/index.html` — UI (palet website Mierakigai); `static/login.html` — halaman masuk
-- `Dockerfile`, `docker-compose.yml`, `deploy/Caddyfile`, `.env.example`, `deploy/sync-data.sh` — deploy ke VPS
+- `Dockerfile`, `docker-compose.yml`, `deploy/Caddyfile`, `.env.example`, `deploy/sync-data.sh`, `deploy/backup-arsip.sh` — deploy ke VPS & backup arsip ke git
+- `data/` — arsip data (repo git terpisah `sales-akrual-data`, di-ignore di repo ini)
