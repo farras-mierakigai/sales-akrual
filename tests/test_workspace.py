@@ -300,14 +300,44 @@ def test_z_existing_account_accepts_invite_and_moves_workspace():
     assert v["me"]["kind"] == "session" and v["invites"][0]["existing"]["workspace"] == "Miftah" and v["invites"][0]["existing"]["same"] is False
     # login Google lagi dengan undangan menggantung → tetap login biasa (akun sudah ada), tidak dibelokkan
     assert login_google(client(), "sub-miftah", "miftah@mierakigai.com") == "login"
-    # terima → pindah ke workspace 1 sebagai user, melihat toko Mierakigai, workspace lamanya tetap ada
-    r = cm.post("/api/undangan/terima", json=dict(t=t))
-    assert r.status_code == 200 and r.json()["status"] == "moved" and r.json()["workspace"] == ws1
+    # Miftah sudah upload di workspace-nya sendiri: toko "Eltahj" (bentrok nama dengan milik Mierakigai) dan "Gudang"
+    assert cm.post("/api/toko", json=dict(name="Eltahj")).status_code == 200
+    assert cm.post("/api/toko", json=dict(name="Gudang")).status_code == 200
+    db.set_ws(old_ws)
+    arsip = db.archive_dir("Eltahj")
+    os.makedirs(arsip, exist_ok=True)
+    open(os.path.join(arsip, "Order.all.test.xlsx"), "wb").write(b"x")
+    with db.engine().begin() as cx:
+        tid_old = db.toko_id(cx, "Gudang")
+    db.set_ws(1)
+    v = cm.get("/api/undangan", params=dict(t=t)).json()["invites"][0]["existing"]
+    assert v["toko"] == ["Eltahj", "Gudang"] and v["can_bring"] is True and v["others"] == 0
+    # terima + bawa data → akun pindah ke workspace 1 sebagai user, kedua toko ikut (Eltahj diberi akhiran " - Miftah" karena bentrok),
+    # arsip file ikut pindah, workspace lamanya yang kosong dihapus
+    r = cm.post("/api/undangan/terima", json=dict(t=t, bawa_data=True))
+    assert r.status_code == 200 and r.json()["status"] == "moved" and r.json()["workspace"] == ws1, r.text
+    assert r.json()["toko"] == ["Eltahj - Miftah", "Gudang"]
     me = cm.get("/api/me").json()
     assert me["workspace"]["id"] == 1 and me["role"] == "user" and me["invites"] == []
-    assert "Eltahj" in [x["name"] for x in cm.get("/api/toko").json()]
-    assert db.ws_get(old_ws) is not None
+    names = [x["name"] for x in cm.get("/api/toko").json()]
+    assert "Eltahj" in names and "Eltahj - Miftah" in names and "Gudang" in names
+    assert os.path.isfile(os.path.join(TMP, "Eltahj - Miftah", "Order.all.test.xlsx")) and not os.path.exists(arsip)
+    with db.engine().begin() as cx:
+        assert db.toko_id(cx, "Gudang") == tid_old            # baris data (toko_id) tidak berubah, hanya pindah workspace
+    assert db.ws_get(old_ws) is None
     assert "miftah@mierakigai.com" in [u["name"] for u in c1.get("/api/users").json()]
+    # workspace lama yang masih punya anggota lain: data tidak boleh dibawa
+    cd = client(); assert login_google(cd, "sub-dewi", "dewi@gmail.com", "Dewi") == "created"
+    dws = cd.get("/api/me").json()["workspace"]["id"]
+    assert cd.post("/api/invites", json=dict(email="eko@gmail.com")).status_code == 200
+    auth.invite_accept(dws, "eko@gmail.com", profile("sub-eko", "eko@gmail.com"))          # Eko jadi anggota kedua
+    assert cd.post("/api/toko", json=dict(name="TokoDewi")).status_code == 200
+    t3 = invite_token(c1.post("/api/invites", json=dict(email="dewi@gmail.com")).json()["link"])
+    ex = cd.get("/api/undangan", params=dict(t=t3)).json()["invites"][0]["existing"]
+    assert ex["can_bring"] is False and ex["others"] == 1 and ex["toko"] == ["TokoDewi"]
+    assert cd.post("/api/undangan/terima", json=dict(t=t3, bawa_data=True)).status_code == 400
+    assert cd.post("/api/undangan/terima", json=dict(t=t3)).json()["status"] == "moved"
+    assert db.ws_toko_names(dws) == ["TokoDewi"] and db.ws_get(dws) is not None
     # undangan ke email yang sudah anggota ditolak; terima ulang tautan lama → error (undangan sudah terpakai)
     assert c1.post("/api/invites", json=dict(email="miftah@mierakigai.com")).status_code == 400
     assert cm.post("/api/undangan/terima", json=dict(t=t)).status_code == 400

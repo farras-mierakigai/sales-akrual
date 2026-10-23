@@ -184,6 +184,16 @@ def auth_google_callback(request: Request, code: Optional[str] = None, state: Op
             inv = auth.read_invite_token(t)
             if not inv:
                 return fail("tautan undangan kedaluwarsa — minta admin mengirim ulang", "/undangan")
+            info = auth.invite_info(inv["workspace_id"], inv["email"])
+            if info and info["existing"] and not info["existing"]["same"]:
+                # akun sudah ada di workspace lain → masuk dulu, lalu kembali ke halaman undangan supaya bisa memilih
+                # apakah data tokonya ikut dibawa (jangan langsung dipindah tanpa tanya)
+                tok, status = auth.google_login(profile, allow_create=False)
+                if status != "login":
+                    return fail("akun untuk email ini tidak ditemukan")
+                resp = RedirectResponse(f"/undangan?t={quote(t)}", status_code=303)
+                resp.delete_cookie(OAUTH_COOKIE, path="/auth/")
+                return _set_session(resp, request, tok)
             tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], profile)
         else:
             tok, status = auth.google_login(profile, allow_create=False)
@@ -453,6 +463,7 @@ def api_invite_view(request: Request, t: Optional[str] = None):
 
 class InviteTokenIn(BaseModel):
     t: str
+    bawa_data: bool = False      # terima + bawa semua toko workspace lama (hanya kalau dia satu-satunya anggota)
 
 
 @app.post("/api/undangan/terima")
@@ -465,12 +476,16 @@ def api_invite_accept(body: InviteTokenIn, request: Request):
         raise HTTPException(401, "masuk dengan Google dulu untuk menerima undangan")
     if viewer["email"] != inv["email"]:
         raise HTTPException(403, f"undangan ini untuk {inv['email']}, Anda masuk sebagai {viewer['email'] or viewer['name']}")
+    before = db.ws_toko_names(inv["workspace_id"])
     try:
-        tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], viewer.get("profile"))
+        tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], viewer.get("profile"), bring_data=body.bawa_data)
     except (PermissionError, ValueError) as e:
         raise HTTPException(400, str(e))
     ws = db.ws_get(inv["workspace_id"]) or {}
-    resp = JSONResponse(dict(ok=True, status=status, workspace=ws.get("name", "")), headers=NO_STORE)
+    moved = [n for n in db.ws_toko_names(inv["workspace_id"]) if n not in before] if body.bawa_data else []
+    with _lock:
+        _cache.clear()          # toko pindah workspace → cache hasil hitung per (workspace, toko) tidak berlaku lagi
+    resp = JSONResponse(dict(ok=True, status=status, workspace=ws.get("name", ""), toko=moved), headers=NO_STORE)
     resp.delete_cookie(auth.SIGNUP_COOKIE, path="/")
     return _set_session(resp, request, tok)
 

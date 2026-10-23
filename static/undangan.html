@@ -31,6 +31,9 @@ button.ghost,.btn.ghost{background:#fff;color:var(--ink2);border-color:var(--lin
 button:disabled{opacity:.6;cursor:default}
 .btn svg{width:18px;height:18px}
 .err{color:var(--bad);font-size:13px;margin-top:10px;min-height:18px}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--ink2);margin:10px 0 2px;cursor:pointer}
+.chk input{margin:3px 0 0}
+.small{font-size:11px;color:var(--muted);margin-left:22px}
 .foot{color:var(--muted);font-size:12px;text-align:center;margin-top:14px}
 .foot a{color:var(--purple);font-weight:700}
 </style>
@@ -63,11 +66,18 @@ function card(i, me, google){
   }else if(ex && ex.same){
     h+=`<div class="note ok">Anda sudah menjadi anggota workspace ini.</div><a class="btn" href="/">Buka dashboard</a>`;
   }else{
-    if(ex) h+=`<div class="note">Akun <b>${esc(i.email)}</b> saat ini ada di workspace <b>${esc(ex.workspace)}</b>. Menerima undangan akan <b>memindahkan</b> akun Anda ke <b>${esc(i.workspace)}</b> — data workspace lama tetap tersimpan, tetapi Anda tidak lagi melihatnya dari akun ini.</div>`;
+    if(ex){
+      h+=`<div class="note">Akun <b>${esc(i.email)}</b> saat ini ada di workspace <b>${esc(ex.workspace)}</b>. Menerima undangan akan <b>memindahkan</b> akun Anda ke <b>${esc(i.workspace)}</b>.</div>`;
+      if(me && ex.toko&&ex.toko.length){
+        if(ex.can_bring) h+=`<label class="chk"><input type="checkbox" id="bawa" checked><span>Bawa ${ex.toko.length} toko beserta semua datanya ke <b>${esc(i.workspace)}</b>: ${ex.toko.map(esc).join(', ')}. Workspace lama <b>${esc(ex.workspace)}</b> yang kosong akan dihapus.</span></label><div class="small">Tidak dicentang = data tetap di workspace lama dan tidak terlihat dari akun ini.</div>`;
+        else h+=`<div class="note">Workspace lama masih punya ${ex.others} anggota lain, jadi ${ex.toko.length} toko di sana (${ex.toko.map(esc).join(', ')}) tetap di sana — hanya akun Anda yang pindah.</div>`;
+      }
+    }
     if(me){
       h+=`<button onclick="accept('${esc(i.token)}',this)">Terima undangan${ex?' & pindah workspace':''}</button>`;
     }else if(google){
       h+=`<a class="btn" href="/auth/google?mode=invite&t=${encodeURIComponent(i.token)}">${G}<span>Terima &amp; masuk dengan Google</span></a>`;
+      if(ex&&ex.toko&&ex.toko.length) h+=`<div class="small" style="margin:8px 0 0">Setelah masuk, Anda bisa memilih apakah ${ex.toko.length} toko di workspace lama ikut dibawa.</div>`;
     }else{
       h+=`<div class="note bad">Masuk dengan Google belum diaktifkan di server ini.</div>`;
     }
@@ -88,7 +98,7 @@ async function load(){
   if(d.me) h+=`<div class="me">${d.me.picture?`<img src="${esc(d.me.picture)}" alt="">`:''}<span>${d.me.kind==='pending'?'Masuk Google sebagai':'Sedang masuk sebagai'} <b>${esc(d.me.email||d.me.name)}</b>${d.me.workspace?` · workspace ${esc(d.me.workspace)}`:''}</span></div>`;
   $('#body').innerHTML=h;
 }
-async function accept(t,btn){ btn.disabled=true; $('#err').textContent=''; try{ const r=await post('/api/undangan/terima',{t}); $('#body').innerHTML=`<div class="note ok">${r.status==='moved'?'Akun Anda dipindahkan ke':'Anda bergabung ke'} workspace <b>${esc(r.workspace)}</b>.</div><a class="btn" href="/">Buka dashboard</a>`; setTimeout(()=>location.href='/',1200); }catch(e){ $('#err').textContent=e.message; btn.disabled=false; } }
+async function accept(t,btn){ btn.disabled=true; $('#err').textContent=''; try{ const cb=$('#bawa'); const r=await post('/api/undangan/terima',{t, bawa_data: !!(cb&&cb.checked)}); $('#body').innerHTML=`<div class="note ok">${r.status==='moved'?'Akun Anda dipindahkan ke':'Anda bergabung ke'} workspace <b>${esc(r.workspace)}</b>${r.toko&&r.toko.length?` bersama toko ${r.toko.map(esc).join(', ')}`:''}.</div><a class="btn" href="/">Buka dashboard</a>`; setTimeout(()=>location.href='/',1200); }catch(e){ $('#err').textContent=e.message; btn.disabled=false; } }
 async function decline(t,btn){ if(!confirm('Tolak undangan ini?')) return; btn.disabled=true; try{ await post('/api/undangan/tolak',{t}); load(); }catch(e){ $('#err').textContent=e.message; btn.disabled=false; } }
 async function logoutThen(t){ try{ await post('/api/logout',{}); }catch(_){} location.href='/auth/google?mode=invite&t='+encodeURIComponent(t); }
 load();

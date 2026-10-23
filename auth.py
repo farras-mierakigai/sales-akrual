@@ -341,16 +341,21 @@ def invite_info(ws_id, email):
     if hit:
         u = users[hit]
         cws = db.ws_get(u["workspace_id"]) or {}
-        existing = dict(name=hit, workspace_id=int(u["workspace_id"]), workspace=cws.get("name", ""),
-                        same=int(u["workspace_id"]) == int(ws_id))
+        same = int(u["workspace_id"]) == int(ws_id)
+        others = [k for k, v in users.items() if int(v.get("workspace_id", 0)) == int(u["workspace_id"]) and k != hit]
+        tokos = [] if same else db.ws_toko_names(u["workspace_id"])
+        # data toko boleh ikut pindah hanya kalau dia satu-satunya anggota workspace lama (tidak mengambil data tim lain)
+        existing = dict(name=hit, workspace_id=int(u["workspace_id"]), workspace=cws.get("name", ""), same=same,
+                        toko=tokos, others=len(others), can_bring=bool(tokos) and not others)
     return dict(token=make_invite_token(ws_id, email), workspace_id=int(ws_id), workspace=ws["name"], email=email,
                 role=inv["role"], invited_by=inv["invited_by"], created=inv["created_at"].isoformat(), existing=existing)
 
 
-def invite_accept(ws_id, email, profile=None):
+def invite_accept(ws_id, email, profile=None, bring_data=False):
     """Terima undangan. profile = profil Google terverifikasi (dipakai kalau akun belum ada / untuk memperbarui foto & nama).
     → (token sesi, status): 'joined' (akun baru dibuat di workspace itu), 'moved' (akun lama dipindah ke workspace itu),
-    'login' (sudah anggota workspace itu). Akun lama yang pindah tetap satu akun: data workspace lamanya tidak dibawa."""
+    'login' (sudah anggota workspace itu). bring_data=True: semua toko (+arsip) workspace lama ikut pindah — hanya
+    diizinkan kalau dia satu-satunya anggota workspace lama; workspace lama yang jadi kosong lalu dihapus."""
     if profile:
         sub, pemail, display, picture = _profile_fields(profile)
         if pemail != email:
@@ -365,10 +370,18 @@ def invite_accept(ws_id, email, profile=None):
             u = users[hit]
             if profile:
                 u.update(google_sub=sub, display_name=display, picture=picture)
-            status = "login" if int(u["workspace_id"]) == int(ws_id) else "moved"
+            old_ws = int(u["workspace_id"])
+            status = "login" if old_ws == int(ws_id) else "moved"
+            if status == "moved" and bring_data:
+                if any(int(v.get("workspace_id", 0)) == old_ws and k != hit for k, v in users.items()):
+                    raise PermissionError("data toko tidak bisa dibawa: masih ada anggota lain di workspace lama")
             u.update(workspace_id=int(ws_id), role=inv["role"])
             db.user_upsert(hit, u)
             db.invite_remove(ws_id, email)
+            if status == "moved" and bring_data:
+                db.ws_move_toko(old_ws, ws_id)
+                if old_ws != db.DEFAULT_WS:
+                    db.ws_delete(old_ws)      # sudah kosong: tanpa toko, tanpa anggota
             return make_token(hit), status
         if not profile:
             raise PermissionError("masuk dengan Google dulu untuk menerima undangan")

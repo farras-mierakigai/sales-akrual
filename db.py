@@ -697,6 +697,55 @@ def ws_delete(ws_id):
         cx.execute(delete(workspace).where(workspace.c.id == ws_id))
 
 
+def ws_toko_names(ws_id):
+    with engine().connect() as cx:
+        return [r[0] for r in cx.execute(select(toko.c.name).where(toko.c.workspace_id == int(ws_id)).order_by(toko.c.name))]
+
+
+def ws_move_toko(src_ws, dst_ws):
+    """Pindahkan SEMUA toko (baris data via toko_id ikut otomatis) + folder arsipnya dari workspace src ke dst.
+    Nama yang bentrok di tujuan diberi akhiran " - <nama workspace asal>". → list (nama lama, nama baru)."""
+    import shutil
+    src_ws, dst_ws = int(src_ws), int(dst_ws)
+    if src_ws == dst_ws:
+        return []
+    try:                                   # akhiran harus lolos safe_name (tanpa tanda kurung dll) agar tetap bisa dicari by name
+        src_name = safe_name((ws_get(src_ws) or {}).get("name") or "")
+    except ValueError:
+        src_name = f"ws{src_ws}"
+    moved = []
+    with engine().begin() as cx:
+        taken = {r[0] for r in cx.execute(select(toko.c.name).where(toko.c.workspace_id == dst_ws))}
+        rows = cx.execute(select(toko.c.id, toko.c.name).where(toko.c.workspace_id == src_ws).order_by(toko.c.name)).all()
+        for tid, name in rows:
+            new = name
+            n = 2
+            while new in taken:
+                new = f"{name} - {src_name}" if n == 2 else f"{name} - {src_name} {n}"
+                n += 1
+            taken.add(new)
+            cx.execute(update(toko).where(toko.c.id == tid).values(workspace_id=dst_ws, name=new, version=toko.c.version + 1))
+            moved.append((name, new))
+    prev = current_ws()
+    try:
+        for old, new in moved:
+            set_ws(src_ws)
+            a = archive_dir(old)
+            set_ws(dst_ws)
+            b = archive_dir(new)
+            if os.path.isdir(a):
+                os.makedirs(os.path.dirname(b), exist_ok=True)
+                if os.path.isdir(b):          # tujuan sudah ada folder (jarang) → gabungkan isinya
+                    for f in os.listdir(a):
+                        shutil.move(os.path.join(a, f), os.path.join(b, f))
+                    shutil.rmtree(a, ignore_errors=True)
+                else:
+                    shutil.move(a, b)
+    finally:
+        set_ws(prev)
+    return moved
+
+
 def ws_members(ws_id):
     with engine().connect() as cx:
         rows = cx.execute(select(app_user).where(app_user.c.workspace_id == int(ws_id)).order_by(app_user.c.created)).mappings().all()
