@@ -23,7 +23,9 @@ header{background:linear-gradient(90deg,var(--lav),#fff 70%);border-bottom:1px s
 .logo{width:34px;height:34px;border-radius:8px;background:var(--purple-dk);display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px}
 header h1{font-size:18px;margin:0;font-weight:800}
 header .sub{color:var(--ink2);font-size:12px}
-.wrap{padding:16px 20px;max-width:1500px;margin:0 auto}
+.wrap{display:flex;align-items:flex-start;gap:20px;padding:16px 20px;max-width:1500px;margin:0 auto}
+.side{flex:0 0 210px;position:sticky;top:14px}
+.main{flex:1;min-width:0}
 .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
 .filters label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 select,input[type=text],input[type=month]{font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--ink);min-width:150px}
@@ -31,9 +33,20 @@ button{font:inherit;font-weight:600;padding:8px 14px;border-radius:5px;border:1p
 button.primary{background:var(--orange);color:#fff;border-color:var(--orange);box-shadow:var(--shadow)}
 button.ghost{border-color:var(--line);color:var(--ink2)}
 button:disabled{opacity:.5;cursor:default}
-.tabs{display:flex;gap:4px;border-bottom:2px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
-.tabs button{border:none;background:none;padding:10px 14px;border-radius:0;color:var(--ink2);font-weight:600;border-bottom:3px solid transparent;margin-bottom:-2px}
-.tabs button.on{color:var(--purple);border-bottom-color:var(--purple)}
+.tabs{display:flex;flex-direction:column;gap:2px;background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:8px}
+.tabs .grp{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:10px 10px 4px}
+.tabs .grp:first-child{padding-top:4px}
+.tabs button{border:none;background:none;text-align:left;padding:8px 10px;border-radius:6px;color:var(--ink2);font-weight:600;border-left:3px solid transparent;white-space:nowrap}
+.tabs button:hover{background:var(--bg2);color:var(--ink)}
+.tabs button.on{background:var(--lav);color:var(--purple-dk);border-left-color:var(--purple)}
+@media(max-width:900px){
+  .wrap{flex-direction:column;gap:12px;padding:12px 16px}
+  .side{position:static;flex:none;width:100%}
+  .tabs{flex-direction:row;overflow-x:auto;padding:6px;gap:4px;-webkit-overflow-scrolling:touch}
+  .tabs .grp{display:none}
+  .tabs button{border-left:none;border-bottom:3px solid transparent;border-radius:6px 6px 0 0;padding:8px 12px;flex:none}
+  .tabs button.on{border-bottom-color:var(--purple)}
+}
 .panel{display:none}.panel.on{display:block}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-bottom:16px}
 .tile{background:#fff;border:1px solid var(--line2);border-radius:var(--radius);padding:12px 14px}
@@ -84,6 +97,23 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
 </header>
 
 <div class="wrap">
+  <aside class="side">
+  <nav class="tabs" aria-label="Menu">
+    <div class="grp">Laporan</div>
+    <button class="on" data-tab="ringkas">Ringkasan</button>
+    <button data-tab="bulan">Per bulan (laporan)</button>
+    <button data-tab="produk">Produk</button>
+    <button data-tab="detail">Status · Batal · Bayar</button>
+    <button data-tab="hpp">HPP &amp; Laba</button>
+    <button data-tab="iklan">Iklan</button>
+    <button data-tab="audit">Audit</button>
+    <div class="grp">Pengaturan</div>
+    <button data-tab="data">Data &amp; file</button>
+    <button data-tab="ws" id="tabWs" style="display:none">Workspace</button>
+  </nav>
+  </aside>
+
+  <div class="main">
   <div class="filters">
     <label>Toko <select id="toko"></select></label>
     <label>Platform <select id="platform">
@@ -100,18 +130,6 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
     <button id="btnExport">⬇ Excel laporan</button>
     <button class="ghost" id="btnReset" title="kosongkan filter bulan">✕ filter</button>
     <span class="small" id="loadinfo"></span>
-  </div>
-
-  <div class="tabs">
-    <button class="on" data-tab="ringkas">Ringkasan</button>
-    <button data-tab="bulan">Per bulan (laporan)</button>
-    <button data-tab="produk">Produk</button>
-    <button data-tab="detail">Status · Batal · Bayar</button>
-    <button data-tab="hpp">HPP & Laba</button>
-    <button data-tab="iklan">Iklan</button>
-    <button data-tab="audit">Audit</button>
-    <button data-tab="data">Data & file</button>
-    <button data-tab="ws" id="tabWs" style="display:none">Workspace</button>
   </div>
 
   <!-- RINGKASAN -->
@@ -266,6 +284,7 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
       <div class="row" style="margin-top:8px"><input type="text" id="nuName" placeholder="nama pengguna, mis. rina" style="min-width:160px"><input type="text" id="nuPass" placeholder="password awal (min 8)" style="min-width:200px"><select id="nuRole" style="min-width:110px"><option value="user">user</option><option value="admin">admin</option></select><button id="btnAddUser">+ Tambah pengguna</button></div></details>
     </div>
   </div>
+  </div><!-- /main -->
 </div>
 <div id="toast"></div>
 
