@@ -34,6 +34,8 @@ Mode server = ada **login multi-user** (tabel `app_user`, password di-hash), fit
 
 Env yang dibaca `app.py`: `SA_MODE` (`local`/`server`), `SA_DATA_DIR`, `SA_HOST`, `SA_PORT`, `SA_SECRET` (rahasia cookie; kosong = dibuat otomatis di `data/.secret`), `SA_ADMIN_USER` + `SA_ADMIN_PASS` (admin pertama, dipakai hanya kalau belum ada pengguna), `SA_GOOGLE_CLIENT_ID` + `SA_GOOGLE_CLIENT_SECRET` + `SA_BASE_URL` (masuk dengan Google, lihat bawah).
 
+**Undangan anggota.** Admin mengundang lewat email di tab *Anggota*. Yang diundang menerima email (SMTP Gmail: `SA_SMTP_USER` + `SA_SMTP_PASS` = App Password; `SA_MAIL_FROM` opsional) berisi tautan `/undangan?t=<token>` (bertanda tangan HMAC, berlaku 14 hari) → klik **Terima & masuk dengan Google**. Undangan tidak lagi otomatis diterima saat login: email yang diundang tapi belum menerima diarahkan ke halaman `/undangan` dulu. Akun yang **sudah ada** di workspace lain juga bisa menerima — akunnya pindah ke workspace pengundang (satu akun = satu workspace; data workspace lama tetap ada, bisa dihapus superadmin). Kalau SMTP tidak diisi, admin tetap mendapat tautan undangan untuk dibagikan manual.
+
 ### Mode SaaS: workspace per pelanggan & masuk dengan Google
 
 - **Workspace** = satu pelanggan/perusahaan. Toko, file, HPP, iklan terikat ke workspace; pengguna hanya melihat workspace-nya sendiri. Nama toko boleh sama di workspace berbeda. Data lama otomatis masuk workspace #1 (nama dari `SA_WS_NAME`, default "Mierakigai") saat database naik versi — tidak perlu migrasi manual.

@@ -721,6 +721,19 @@ def invite_remove(ws_id, email):
         cx.execute(delete(ws_invite).where(ws_invite.c.workspace_id == int(ws_id), ws_invite.c.email == email))
 
 
+def invite_get(ws_id, email):
+    with engine().connect() as cx:
+        r = cx.execute(select(ws_invite).where(ws_invite.c.workspace_id == int(ws_id), ws_invite.c.email == email)).mappings().first()
+    return dict(r) if r else None
+
+
+def invites_for_email(email):
+    """Semua undangan yang masih menunggu untuk email ini (terlama dulu)."""
+    with engine().connect() as cx:
+        rows = cx.execute(select(ws_invite).where(ws_invite.c.email == email).order_by(ws_invite.c.created_at)).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def invite_pop(email):
     """Undangan terlama untuk email ini (dihapus setelah dipakai) → dict(workspace_id, role) atau None."""
     with engine().begin() as cx:

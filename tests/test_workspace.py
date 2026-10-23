@@ -35,8 +35,18 @@ def login_pw(c, user, pw):
 def login_google(c, sub, email, name="Orang"):
     """Lewati HTTP ke Google: panggil auth.google_login langsung lalu pasang cookie sesinya."""
     tok, status = auth.google_login(dict(sub=sub, email=email, email_verified=True, name=name, picture=""))
-    c.cookies.set(auth.COOKIE, tok)
+    if tok:
+        c.cookies.set(auth.COOKIE, tok)
     return status
+
+
+def profile(sub, email, name="Orang"):
+    return dict(sub=sub, email=email, email_verified=True, name=name, picture="")
+
+
+def invite_token(link):
+    from urllib.parse import urlparse, parse_qs, unquote
+    return unquote(parse_qs(urlparse(link).query)["t"][0])
 
 
 def test_bootstrap_and_password_login():
@@ -103,9 +113,26 @@ def test_invite_joins_existing_workspace():
     c1 = login_pw(client(), "farras", "rahasia123")
     r = c1.post("/api/invites", json=dict(email="Rina@Gmail.com", role="user"))
     assert r.status_code == 200 and r.json()["email"] == "rina@gmail.com"
+    assert r.json()["mail"] == "off" and r.json()["link"].startswith("https://apps.test/undangan?t=")   # SMTP tidak diisi → tautan manual
+    t = invite_token(r.json()["link"])
     assert [i["email"] for i in c1.get("/api/invites").json()] == ["rina@gmail.com"]
+    # tautan email bisa dibuka tanpa login: menampilkan workspace, pengundang, role
+    anon = client()
+    v = anon.get("/api/undangan", params=dict(t=t)).json()
+    assert v["me"] is None and v["invites"][0]["workspace"] == "Mierakigai" and v["invites"][0]["role"] == "user" \
+        and v["invites"][0]["invited_by"] == "farras" and v["invites"][0]["existing"] is None
+    assert anon.post("/api/undangan/terima", json=dict(t=t)).status_code == 401       # harus masuk Google dulu
+    # login biasa TIDAK lagi auto-join: status 'invited', tanpa akun → callback mengarahkan ke /undangan
     c3 = client()
-    assert login_google(c3, "sub-rina", "rina@gmail.com", "Rina") == "joined"
+    assert login_google(c3, "sub-rina", "rina@gmail.com", "Rina") == "invited"
+    assert c3.get("/api/me").status_code == 401
+    assert c1.get("/api/invites").json() and db.users_load().get("rina@gmail.com") is None
+    # profil Google sementara (cookie pending) + terima → akun dibuat di workspace pengundang, sesi terpasang
+    c3.cookies.set(auth.SIGNUP_COOKIE, auth.make_pending(profile("sub-rina", "rina@gmail.com", "Rina")))
+    v = c3.get("/api/undangan").json()
+    assert v["me"]["kind"] == "pending" and [i["workspace"] for i in v["invites"]] == ["Mierakigai"]
+    r = c3.post("/api/undangan/terima", json=dict(t=t))
+    assert r.status_code == 200 and r.json()["status"] == "joined", r.text
     me = c3.get("/api/me").json()
     assert me["workspace"]["id"] == 1 and me["role"] == "user"
     assert [t["name"] for t in c3.get("/api/toko").json()] == ["Eltahj"]
@@ -221,6 +248,69 @@ def test_schema_migration_from_old_database():
         db.set_ws(1)
         os.environ["SA_DB_URL"] = "sqlite:///" + os.path.join(TMP, "t.db")
         db._engine = None
+
+
+
+
+def test_z_invite_token_and_email_checks():
+    c1 = login_pw(client(), "farras", "rahasia123")
+    t = invite_token(c1.post("/api/invites", json=dict(email="budi@gmail.com", role="admin")).json()["link"])
+    # token dipalsukan / rusak
+    assert client().get("/api/undangan", params=dict(t=t[:-4] + "AAAA")).json()["error"]
+    assert client().post("/api/undangan/terima", json=dict(t="bukan-token")).status_code == 400
+    # orang lain (email berbeda) tidak bisa menerima maupun menolak undangan budi
+    c4 = client(); c4.cookies.set(auth.SIGNUP_COOKIE, auth.make_pending(profile("sub-x", "orang-lain@gmail.com")))
+    assert c4.post("/api/undangan/terima", json=dict(t=t)).status_code == 403
+    assert c4.post("/api/undangan/tolak", json=dict(t=t)).status_code == 403
+    with_pw = login_pw(client(), "farras", "rahasia123")
+    assert with_pw.post("/api/undangan/terima", json=dict(t=t)).status_code == 403
+    # jalur tombol "Terima & masuk dengan Google": profil email lain ditolak, email yang benar diterima dengan role admin
+    try:
+        auth.invite_accept(1, "budi@gmail.com", profile("sub-x", "orang-lain@gmail.com"))
+        raise AssertionError("email lain seharusnya ditolak")
+    except PermissionError:
+        pass
+    tok, status = auth.invite_accept(1, "budi@gmail.com", profile("sub-budi", "budi@gmail.com", "Budi"))
+    assert status == "joined" and auth.verify_token(tok)["role"] == "admin" and auth.verify_token(tok)["workspace_id"] == 1
+    # undangan sudah terpakai → tautan lama tidak berlaku lagi; kirim ulang untuk email yang tak ada undangannya → 404
+    assert client().get("/api/undangan", params=dict(t=t)).json()["error"]
+    assert c1.post("/api/invites/resend", json=dict(email="budi@gmail.com")).status_code == 404
+    # tolak undangan oleh pemilik email → hilang dari daftar admin
+    t2 = invite_token(c1.post("/api/invites", json=dict(email="cici@gmail.com")).json()["link"])
+    assert c1.post("/api/invites/resend", json=dict(email="cici@gmail.com")).json()["mail"] == "off"
+    c5 = client(); c5.cookies.set(auth.SIGNUP_COOKIE, auth.make_pending(profile("sub-cici", "cici@gmail.com")))
+    assert c5.post("/api/undangan/tolak", json=dict(t=t2)).status_code == 200
+    assert "cici@gmail.com" not in [i["email"] for i in c1.get("/api/invites").json()]
+
+
+def test_z_existing_account_accepts_invite_and_moves_workspace():
+    """Kasus nyata: Miftah sudah punya workspace sendiri (sign-up), lalu diundang ke workspace Mierakigai → menerima = akunnya pindah."""
+    cm = client()
+    assert login_google(cm, "sub-miftah", "miftah@mierakigai.com", "Miftah") == "created"
+    old_ws = cm.get("/api/me").json()["workspace"]["id"]
+    assert old_ws != 1
+    c1 = login_pw(client(), "farras", "rahasia123")
+    ws1 = c1.get("/api/me").json()["workspace"]["name"]      # sudah diganti jadi "PT Mierakigai" oleh tes sebelumnya
+    link = c1.post("/api/invites", json=dict(email="miftah@mierakigai.com", role="user")).json()["link"]
+    t = invite_token(link)
+    # banner di dashboard: /api/me akun Miftah memuat undangan + halaman undangan tahu akunnya ada di workspace lain
+    me = cm.get("/api/me").json()
+    assert [i["workspace"] for i in me["invites"]] == [ws1] and me["invites"][0]["token"]
+    v = cm.get("/api/undangan", params=dict(t=t)).json()
+    assert v["me"]["kind"] == "session" and v["invites"][0]["existing"]["workspace"] == "Miftah" and v["invites"][0]["existing"]["same"] is False
+    # login Google lagi dengan undangan menggantung → tetap login biasa (akun sudah ada), tidak dibelokkan
+    assert login_google(client(), "sub-miftah", "miftah@mierakigai.com") == "login"
+    # terima → pindah ke workspace 1 sebagai user, melihat toko Mierakigai, workspace lamanya tetap ada
+    r = cm.post("/api/undangan/terima", json=dict(t=t))
+    assert r.status_code == 200 and r.json()["status"] == "moved" and r.json()["workspace"] == ws1
+    me = cm.get("/api/me").json()
+    assert me["workspace"]["id"] == 1 and me["role"] == "user" and me["invites"] == []
+    assert "Eltahj" in [x["name"] for x in cm.get("/api/toko").json()]
+    assert db.ws_get(old_ws) is not None
+    assert "miftah@mierakigai.com" in [u["name"] for u in c1.get("/api/users").json()]
+    # undangan ke email yang sudah anggota ditolak; terima ulang tautan lama → error (undangan sudah terpakai)
+    assert c1.post("/api/invites", json=dict(email="miftah@mierakigai.com")).status_code == 400
+    assert cm.post("/api/undangan/terima", json=dict(t=t)).status_code == 400
 
 
 if __name__ == "__main__":

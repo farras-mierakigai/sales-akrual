@@ -6,8 +6,8 @@ Mode lokal (SA_MODE=local, default di Mac) tidak butuh login: pemakai dianggap a
 
 Dua jalur masuk:
 - username + password (akun dibuat admin workspace)
-- Google (OIDC): sign-up mandiri. Email baru → workspace baru (dia admin-nya); email yang diundang → masuk ke
-  workspace pengundang. Env: SA_GOOGLE_CLIENT_ID, SA_GOOGLE_CLIENT_SECRET, SA_BASE_URL (mis. https://apps.mierakigai.com).
+- Google (OIDC): sign-up mandiri. Email baru → workspace baru (dia admin-nya); email yang diundang → diarahkan ke
+  halaman /undangan untuk menerima dulu (akun yang sudah ada pun bisa menerima: akunnya pindah workspace). Env: SA_GOOGLE_CLIENT_ID, SA_GOOGLE_CLIENT_SECRET, SA_BASE_URL (mis. https://apps.mierakigai.com).
 """
 import os
 import json
@@ -223,12 +223,11 @@ def google_login(profile, allow_create=True):
             u.update(google_sub=sub, email=email, display_name=display, picture=picture)
             db.user_upsert(hit, u)
             return make_token(hit), "login"
-        # 2. diundang ke workspace yang sudah ada → jadi anggota (tanpa form)
-        inv = db.invite_pop(email)
-        if inv and db.ws_get(inv["workspace_id"]):
-            ws, role, status = inv["workspace_id"], inv["role"], "joined"
+        # 2. diundang ke workspace yang sudah ada → harus menerima undangan dulu (halaman /undangan), bukan auto-join
+        if any(db.ws_get(i["workspace_id"]) for i in db.invites_for_email(email)):
+            return None, "invited"
         # 3. pendaftar baru → workspace sendiri, dia admin
-        elif allow_create:
+        if allow_create:
             ws = db.ws_create(display or email, email)
             role, status = "admin", "created"
         else:
@@ -300,6 +299,83 @@ def read_pending(token):
         return dict(sub=p["sub"], email=p["email"], name=p.get("name", ""), picture=p.get("picture", ""), email_verified=True)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------- undangan workspace (tautan bertanda tangan di email)
+INVITE_DAYS = 14
+
+
+def make_invite_token(ws_id, email):
+    body = json.dumps(dict(t="inv", ws=int(ws_id), email=email, exp=int(time.time()) + INVITE_DAYS * 86400), separators=(",", ":"))
+    sig = hmac.new(_secret(), body.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{body}|{sig}".encode()).decode()
+
+
+def read_invite_token(token):
+    """→ dict(workspace_id, email) atau None kalau kedaluwarsa / dipalsukan. Keberadaan undangannya dicek terpisah (invite_info)."""
+    try:
+        body, sig = base64.urlsafe_b64decode(token.encode()).decode().rsplit("|", 1)
+        if not hmac.compare_digest(hmac.new(_secret(), body.encode(), hashlib.sha256).hexdigest(), sig):
+            return None
+        p = json.loads(body)
+        if p.get("t") != "inv" or int(p.get("exp", 0)) < time.time():
+            return None
+        return dict(workspace_id=int(p["ws"]), email=norm_email(p["email"]))
+    except Exception:
+        return None
+
+
+def _account_by_email(users, email):
+    return next((k for k, v in users.items() if v.get("email") == email), None)
+
+
+def invite_info(ws_id, email):
+    """Undangan yang masih berlaku → dict untuk halaman /undangan, atau None. 'existing' = akun email ini yang sudah ada
+    (di workspace mana) supaya halaman bisa memberi tahu bahwa menerima = pindah workspace."""
+    inv, ws = db.invite_get(ws_id, email), db.ws_get(ws_id)
+    if not inv or not ws:
+        return None
+    users = load_users()
+    hit = _account_by_email(users, email)
+    existing = None
+    if hit:
+        u = users[hit]
+        cws = db.ws_get(u["workspace_id"]) or {}
+        existing = dict(name=hit, workspace_id=int(u["workspace_id"]), workspace=cws.get("name", ""),
+                        same=int(u["workspace_id"]) == int(ws_id))
+    return dict(token=make_invite_token(ws_id, email), workspace_id=int(ws_id), workspace=ws["name"], email=email,
+                role=inv["role"], invited_by=inv["invited_by"], created=inv["created_at"].isoformat(), existing=existing)
+
+
+def invite_accept(ws_id, email, profile=None):
+    """Terima undangan. profile = profil Google terverifikasi (dipakai kalau akun belum ada / untuk memperbarui foto & nama).
+    → (token sesi, status): 'joined' (akun baru dibuat di workspace itu), 'moved' (akun lama dipindah ke workspace itu),
+    'login' (sudah anggota workspace itu). Akun lama yang pindah tetap satu akun: data workspace lamanya tidak dibawa."""
+    if profile:
+        sub, pemail, display, picture = _profile_fields(profile)
+        if pemail != email:
+            raise PermissionError(f"undangan ini untuk {email}, tetapi Anda masuk sebagai {pemail}")
+    with _lock:
+        inv, ws = db.invite_get(ws_id, email), db.ws_get(ws_id)
+        if not inv or not ws:
+            raise PermissionError("undangan tidak ditemukan atau sudah dibatalkan oleh admin")
+        users = load_users()
+        hit = _account_by_email(users, email)
+        if hit:
+            u = users[hit]
+            if profile:
+                u.update(google_sub=sub, display_name=display, picture=picture)
+            status = "login" if int(u["workspace_id"]) == int(ws_id) else "moved"
+            u.update(workspace_id=int(ws_id), role=inv["role"])
+            db.user_upsert(hit, u)
+            db.invite_remove(ws_id, email)
+            return make_token(hit), status
+        if not profile:
+            raise PermissionError("masuk dengan Google dulu untuk menerima undangan")
+        db.user_upsert(email, dict(hash="", role=inv["role"], created=int(time.time()), workspace_id=int(ws_id), email=email,
+                                   google_sub=sub, display_name=display, picture=picture))
+        db.invite_remove(ws_id, email)
+        return make_token(email), "joined"
 
 
 # ---------------------------------------------------------------- superadmin (pemilik platform)

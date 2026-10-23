@@ -22,6 +22,7 @@ import analysis
 import audit
 import auth
 import db
+import mailer
 import hpp as hppmod
 import ads as adsmod
 import parsers
@@ -30,7 +31,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
 NO_STORE = {"Cache-Control": "no-store, max-age=0"}
 PUBLIC_PATHS = {"/", "/login", "/api/login", "/api/login-config", "/auth/google", "/auth/google/callback", "/favicon.ico", "/healthz",
-                "/privacy", "/terms", "/daftar", "/daftar/lengkapi", "/api/signup/pending", "/api/signup/complete"}
+                "/privacy", "/terms", "/daftar", "/daftar/lengkapi", "/api/signup/pending", "/api/signup/complete",
+                "/undangan", "/api/undangan", "/api/undangan/terima", "/api/undangan/tolak"}
 OAUTH_COOKIE = "sa_oauth"
 
 
@@ -136,17 +138,22 @@ def api_login_config():
 
 
 @app.get("/auth/google")
-def auth_google(request: Request, mode: str = "login"):
-    """mode=login: hanya akun yang sudah ada / diundang. mode=signup: email baru diarahkan ke form data diri."""
-    if auth.is_local() or current_user(request):
+def auth_google(request: Request, mode: str = "login", t: Optional[str] = None):
+    """mode=login: hanya akun yang sudah ada / diundang. mode=signup: email baru diarahkan ke form data diri.
+    mode=invite&t=<token>: dari tombol Terima di halaman /undangan — setelah masuk Google, undangan langsung diterima."""
+    if auth.is_local():
         return RedirectResponse("/", status_code=303)
-    mode = "signup" if mode == "signup" else "login"
-    back = "/daftar" if mode == "signup" else "/login"
+    mode = mode if mode in ("signup", "invite") else "login"
+    if mode == "invite" and not (t and auth.read_invite_token(t)):
+        return RedirectResponse("/undangan?err=" + quote("tautan undangan tidak valid atau kedaluwarsa"), status_code=303)
+    if mode != "invite" and current_user(request):
+        return RedirectResponse("/", status_code=303)
+    back = {"signup": "/daftar", "invite": f"/undangan?t={quote(t or '')}"}.get(mode, "/login")
     if not auth.google_enabled():
-        return RedirectResponse(back + "?err=" + quote("masuk dengan Google belum diaktifkan"), status_code=303)
+        return RedirectResponse(back + ("&" if "?" in back else "?") + "err=" + quote("masuk dengan Google belum diaktifkan"), status_code=303)
     state = secrets.token_urlsafe(24)
     resp = RedirectResponse(auth.google_auth_url(state), status_code=303)
-    resp.set_cookie(OAUTH_COOKIE, f"{state}|{mode}", max_age=600, httponly=True, samesite="lax", secure=_secure_cookie(request), path="/auth/")
+    resp.set_cookie(OAUTH_COOKIE, f"{state}|{mode}|{t or ''}", max_age=600, httponly=True, samesite="lax", secure=_secure_cookie(request), path="/auth/")
     return resp
 
 
@@ -158,11 +165,13 @@ def _set_session(resp, request, tok):
 
 @app.get("/auth/google/callback")
 def auth_google_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
-    expect, _, mode = request.cookies.get(OAUTH_COOKIE, "").partition("|")
-    back = "/daftar" if mode == "signup" else "/login"
+    expect, _, rest = request.cookies.get(OAUTH_COOKIE, "").partition("|")
+    mode, _, t = rest.partition("|")
+    back = {"signup": "/daftar", "invite": f"/undangan?t={quote(t)}"}.get(mode, "/login")
 
     def fail(msg, to=None):
-        r = RedirectResponse((to or back) + "?err=" + quote(msg), status_code=303)
+        to = to or back
+        r = RedirectResponse(to + ("&" if "?" in to else "?") + "err=" + quote(msg), status_code=303)
         r.delete_cookie(OAUTH_COOKIE, path="/auth/")
         return r
     if error or not code:
@@ -171,11 +180,24 @@ def auth_google_callback(request: Request, code: Optional[str] = None, state: Op
         return fail("sesi masuk kedaluwarsa — coba lagi")
     try:
         profile = auth.google_fetch_profile(code)
-        tok, status = auth.google_login(profile, allow_create=False)
+        if mode == "invite":
+            inv = auth.read_invite_token(t)
+            if not inv:
+                return fail("tautan undangan kedaluwarsa — minta admin mengirim ulang", "/undangan")
+            tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], profile)
+        else:
+            tok, status = auth.google_login(profile, allow_create=False)
     except (PermissionError, ValueError) as e:
         return fail(str(e))
     except Exception:
         return fail("gagal menghubungi Google — coba lagi")
+    if status == "invited":
+        # ada undangan untuk email ini → tunjukkan dulu, biarkan dia menerima (profil Google disimpan sementara di cookie)
+        resp = RedirectResponse("/undangan", status_code=303)
+        resp.delete_cookie(OAUTH_COOKIE, path="/auth/")
+        resp.set_cookie(auth.SIGNUP_COOKIE, auth.make_pending(profile), max_age=auth.SIGNUP_MINUTES * 60, httponly=True,
+                        samesite="lax", secure=_secure_cookie(request), path="/")
+        return resp
     if status == "new":
         if mode != "signup":
             return fail("Email ini belum terdaftar. Silakan daftar dulu.", "/daftar")
@@ -308,7 +330,10 @@ def api_me(request: Request):
     ws = db.ws_get(u["workspace_id"]) or dict(id=u["workspace_id"], name="")
     return JSONResponse(dict(user=u["name"], role=u["role"], local=auth.is_local(), mode=auth.mode(),
                              email=u.get("email", ""), display_name=u.get("display_name") or u["name"], picture=u.get("picture", ""),
-                             google=u.get("google", False), superadmin=auth.is_superadmin(u),
+                             google=u.get("google", False), superadmin=auth.is_superadmin(u), mail=mailer.enabled(),
+                             invites=[dict(token=i["token"], workspace=i["workspace"], role=i["role"], invited_by=i["invited_by"])
+                                      for i in (auth.invite_info(r["workspace_id"], u["email"]) for r in db.invites_for_email(u["email"]))
+                                      if i and not (i["existing"] or {}).get("same")] if u.get("email") else [],
                              workspace=dict(id=ws["id"], name=ws["name"])), headers=NO_STORE)
 
 
@@ -337,6 +362,25 @@ def api_invites(request: Request):
     return db.invite_list(u["workspace_id"])
 
 
+def _base_url(request: Request):
+    base = os.environ.get("SA_BASE_URL", "").strip().rstrip("/")
+    if base:
+        return base
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    return f"{proto}://{host}"
+
+
+def _send_invite_mail(request: Request, u, email, role):
+    """Buat tautan terima + kirim email. → dict(link, mail: sent|off|failed, mail_msg)."""
+    link = _base_url(request) + "/undangan?t=" + quote(auth.make_invite_token(u["workspace_id"], email))
+    if not mailer.enabled():
+        return dict(link=link, mail="off", mail_msg="email belum dikonfigurasi — bagikan tautan ini sendiri")
+    ws = db.ws_get(u["workspace_id"]) or {}
+    ok, msg = mailer.send_invite(email, ws.get("name", "Sales Akrual"), u.get("display_name") or u["name"], role, link, auth.INVITE_DAYS)
+    return dict(link=link, mail="sent" if ok else "failed", mail_msg=msg)
+
+
 @app.post("/api/invites")
 def api_invites_add(body: InviteIn, request: Request):
     u = require_admin(request)
@@ -347,8 +391,100 @@ def api_invites_add(body: InviteIn, request: Request):
     role = body.role if body.role in auth.ROLES else "user"
     if any(m.get("email") == email for m in db.ws_members(u["workspace_id"]).values()):
         raise HTTPException(400, "email ini sudah jadi anggota")
-    db.invite_add(u["workspace_id"], email, role, u["name"])
-    return dict(ok=True, email=email, role=role)
+    db.invite_add(u["workspace_id"], email, role, u.get("display_name") or u["name"])
+    return dict(ok=True, email=email, role=role, **_send_invite_mail(request, u, email, role))
+
+
+class InviteEmailIn(BaseModel):
+    email: str
+
+
+@app.post("/api/invites/resend")
+def api_invites_resend(body: InviteEmailIn, request: Request):
+    u = require_admin(request)
+    email = body.email.strip().lower()
+    inv = db.invite_get(u["workspace_id"], email)
+    if not inv:
+        raise HTTPException(404, "undangan tidak ditemukan")
+    return dict(ok=True, email=email, role=inv["role"], **_send_invite_mail(request, u, email, inv["role"]))
+
+
+# ---------------------------------------------------------------- halaman terima undangan (publik)
+
+def _invite_viewer(request: Request):
+    """Siapa yang membuka halaman undangan: akun yang sedang login, atau profil Google sementara (cookie pending), atau None."""
+    u = current_user(request)
+    if u:
+        return dict(kind="session", email=u.get("email", ""), name=u.get("display_name") or u["name"], picture=u.get("picture", ""),
+                    workspace=(db.ws_get(u["workspace_id"]) or {}).get("name", ""), user=u)
+    p = auth.read_pending(request.cookies.get(auth.SIGNUP_COOKIE, ""))
+    if p:
+        return dict(kind="pending", email=p["email"], name=p["name"], picture=p["picture"], workspace="", profile=p)
+    return None
+
+
+@app.get("/undangan")
+def invite_page():
+    return FileResponse(os.path.join(ROOT, "static", "undangan.html"), headers=NO_STORE)
+
+
+@app.get("/api/undangan")
+def api_invite_view(request: Request, t: Optional[str] = None):
+    """Isi halaman /undangan: undangan dari token (tautan email) atau semua undangan untuk email yang sedang masuk."""
+    viewer = _invite_viewer(request)
+    invites, err = [], None
+    if t:
+        inv = auth.read_invite_token(t)
+        if not inv:
+            err = "tautan undangan tidak valid atau sudah kedaluwarsa (berlaku %d hari) — minta admin mengirim ulang" % auth.INVITE_DAYS
+        else:
+            info = auth.invite_info(inv["workspace_id"], inv["email"])
+            if info:
+                invites.append(info)
+            else:
+                err = "undangan ini sudah dipakai atau dibatalkan oleh admin"
+    elif viewer and viewer["email"]:
+        invites = [i for i in (auth.invite_info(r["workspace_id"], viewer["email"]) for r in db.invites_for_email(viewer["email"])) if i]
+    me = None
+    if viewer:
+        me = dict(kind=viewer["kind"], email=viewer["email"], name=viewer["name"], picture=viewer["picture"], workspace=viewer["workspace"])
+    return JSONResponse(dict(invites=invites, me=me, google=auth.google_enabled(), error=err), headers=NO_STORE)
+
+
+class InviteTokenIn(BaseModel):
+    t: str
+
+
+@app.post("/api/undangan/terima")
+def api_invite_accept(body: InviteTokenIn, request: Request):
+    inv = auth.read_invite_token(body.t)
+    if not inv:
+        raise HTTPException(400, "tautan undangan tidak valid atau kedaluwarsa")
+    viewer = _invite_viewer(request)
+    if not viewer:
+        raise HTTPException(401, "masuk dengan Google dulu untuk menerima undangan")
+    if viewer["email"] != inv["email"]:
+        raise HTTPException(403, f"undangan ini untuk {inv['email']}, Anda masuk sebagai {viewer['email'] or viewer['name']}")
+    try:
+        tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], viewer.get("profile"))
+    except (PermissionError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    ws = db.ws_get(inv["workspace_id"]) or {}
+    resp = JSONResponse(dict(ok=True, status=status, workspace=ws.get("name", "")), headers=NO_STORE)
+    resp.delete_cookie(auth.SIGNUP_COOKIE, path="/")
+    return _set_session(resp, request, tok)
+
+
+@app.post("/api/undangan/tolak")
+def api_invite_decline(body: InviteTokenIn, request: Request):
+    inv = auth.read_invite_token(body.t)
+    if not inv:
+        raise HTTPException(400, "tautan undangan tidak valid atau kedaluwarsa")
+    viewer = _invite_viewer(request)
+    if not viewer or viewer["email"] != inv["email"]:
+        raise HTTPException(403, "hanya pemilik email yang diundang yang bisa menolak")
+    db.invite_remove(inv["workspace_id"], inv["email"])
+    return JSONResponse(dict(ok=True), headers=NO_STORE)
 
 
 @app.delete("/api/invites")
