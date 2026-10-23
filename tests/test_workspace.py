@@ -379,6 +379,9 @@ def test_z_security_headers():
     assert "frame-ancestors 'none'" in h["content-security-policy"] and "https://cdnjs.cloudflare.com" in h["content-security-policy"]
     assert "referrer-policy" in h and "permissions-policy" in h
     assert "content-security-policy" in client().get("/api/login-config").headers
+    # HSTS hanya saat lewat HTTPS (proxy mengirim X-Forwarded-Proto), tidak di http polos / lokal
+    assert "max-age=31536000" in client().get("/login", headers={"X-Forwarded-Proto": "https"}).headers["strict-transport-security"]
+    assert "strict-transport-security" not in TestClient(appmod.app, base_url="http://apps.test").get("/login").headers
 
 
 if __name__ == "__main__":

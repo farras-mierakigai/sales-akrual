@@ -66,6 +66,8 @@ async def security_headers(request: Request, call_next):
     resp = await call_next(request)
     for k, v in SECURITY_HEADERS.items():
         resp.headers.setdefault(k, v)
+    if _secure_cookie(request):   # hanya lewat HTTPS: paksa HTTPS setahun ke depan (tidak bergantung pada konfigurasi proxy)
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return resp
 
 
@@ -1038,4 +1040,4 @@ if __name__ == "__main__":
         print(f"email: kirim langsung sebagai {mailer.from_addr()} — TXT {mailer.selector()}._domainkey.{mailer.from_domain()} = {mailer.dkim_txt() or 'GAGAL membuat kunci'}")
     else:
         print(f"email: mode {mailer.mode()}")
-    uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")
+    uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*", server_header=False)
