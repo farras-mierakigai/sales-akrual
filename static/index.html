@@ -75,6 +75,24 @@ tr.dim td{color:var(--muted)}
 .note{background:var(--bg2);border-left:4px solid var(--purple);padding:10px 12px;border-radius:6px;font-size:13px;color:var(--ink2);margin:10px 0}
 .drop{border:2px dashed var(--purple);border-radius:var(--radius);padding:22px;text-align:center;color:var(--ink2);background:var(--bg2)}
 .drop.over{background:var(--lav)}
+.drop.busy{pointer-events:none;border-style:solid;border-color:var(--line);background:#fff;color:var(--muted)}
+#dropBusy{display:none}
+.drop.busy #dropIdle{display:none}
+.drop.busy #dropBusy{display:inline}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--lav);border-top-color:var(--purple);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.upprog{display:none;margin-top:10px}
+.upprog.on{display:block}
+.upprog .st{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink2);margin-bottom:6px}
+.upprog .st b{color:var(--ink)}
+.pbar{height:8px;background:var(--lav);border-radius:999px;overflow:hidden}
+.pbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--purple),var(--purple-dk));border-radius:999px;transition:width .2s ease}
+.pbar.indet i{width:35%;animation:indet 1.1s ease-in-out infinite}
+@keyframes indet{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+.uplist{list-style:none;margin:8px 0 0;padding:0;font-size:12px;color:var(--ink2)}
+.uplist li{display:flex;gap:8px;align-items:center;padding:3px 0}
+.uplist li .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uplist li .sz{color:var(--muted)}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .small{font-size:12px;color:var(--muted)}
 .muted{color:var(--muted)}
@@ -260,7 +278,12 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
         <h2>Upload file export</h2>
         <div class="desc">Format yang dikenali otomatis: Shopee <b>Order.all*.xlsx</b> & <b>Income*.xlsx</b> (Laporan Penghasilan); TikTok <b>Semua pesanan*.csv</b> & <b>income_*.xlsx</b> (Tokopedia ikut di dalam file TikTok); opsional TikTok <b>Onhold-unsettled*.xlsx</b> untuk estimasi resmi dana yang belum cair. Boleh periode tumpang-tindih — baris yang sama diambil dari file terbaru.</div>
         <div class="row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--ink2);font-weight:600;text-transform:uppercase;letter-spacing:.04em;display:flex;flex-direction:column;gap:4px">Masuk ke toko <select id="upToko" style="min-width:200px"></select></label><span class="small" style="align-self:end">File yang tidak punya petunjuk toko (mis. laporan penghasilan TikTok) akan masuk ke toko yang dipilih di sini.</span></div>
-        <div class="drop" id="drop">Tarik file ke sini atau <label style="color:var(--purple);cursor:pointer;text-decoration:underline">pilih file<input type="file" id="fileInput" multiple style="display:none"></label></div>
+        <div class="drop" id="drop"><span id="dropIdle">Tarik file ke sini atau <label style="color:var(--purple);cursor:pointer;text-decoration:underline">pilih file<input type="file" id="fileInput" multiple style="display:none"></label></span><span id="dropBusy"></span></div>
+        <div class="upprog" id="upProg">
+          <div class="st"><span id="upStatus"><i class="spin"></i>menyiapkan…</span><b id="upPct"></b></div>
+          <div class="pbar" id="upBar"><i></i></div>
+          <ul class="uplist" id="upList"></ul>
+        </div>
         <div id="upResult" class="small" style="margin-top:8px"></div>
       </div>
     </div>
@@ -392,15 +415,54 @@ const drop=$('#drop');
 drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
 drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
 drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');upload(e.dataTransfer.files)});
-$('#fileInput').onchange=e=>upload(e.target.files);
-async function upload(files){
+$('#fileInput').onchange=e=>{ upload(e.target.files); e.target.value=''; };
+const fmtMB=b=>(b/1048576).toFixed(b<10485760?1:0)+' MB';
+let uploading=false;
+function upload(files){
+  if(uploading) return toast('masih ada upload yang berjalan');
+  files=[...files]; if(!files.length) return;
   const t=$('#upToko').value||$('#toko').value; if(!t) return toast('buat/pilih toko dulu');
+  const total=files.reduce((a,f)=>a+f.size,0);
   const fd=new FormData(); fd.append('toko',t); for(const f of files) fd.append('files',f);
-  $('#upResult').textContent='mengunggah '+files.length+' file…';
-  try{ const res=await api('/api/upload',{method:'POST',body:fd});
-    $('#upResult').innerHTML=`<b>Masuk ke toko ${t}:</b><br>`+res.map(r=>`${r.ok?'✅':'⚠️'} ${r.file} — ${r.ok?r.kind:r.msg}`).join('<br>');
+  const esc=x=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  // tampilan: dropzone dikunci + progress bar + daftar file
+  uploading=true; drop.classList.add('busy'); $('#fileInput').disabled=true;
+  $('#dropBusy').innerHTML=`<i class="spin"></i>Mengunggah ${files.length} file ke toko <b>${esc(t)}</b>…`;
+  $('#upResult').textContent='';
+  $('#upProg').classList.add('on'); $('#upBar').classList.remove('indet'); $('#upBar').firstElementChild.style.width='0%';
+  $('#upStatus').innerHTML=`<i class="spin"></i>mengunggah… 0 / ${fmtMB(total)}`; $('#upPct').textContent='0%';
+  $('#upList').innerHTML=files.map(f=>`<li><i class="spin"></i><span class="nm">${esc(f.name)}</span><span class="sz">${fmtMB(f.size)}</span></li>`).join('');
+
+  const xhr=new XMLHttpRequest();
+  xhr.open('POST','/api/upload');
+  xhr.upload.onprogress=e=>{
+    if(!e.lengthComputable) return;
+    const pct=Math.min(100,Math.round(e.loaded/e.total*100));
+    $('#upBar').firstElementChild.style.width=pct+'%'; $('#upPct').textContent=pct+'%';
+    $('#upStatus').innerHTML=`<i class="spin"></i>mengunggah… ${fmtMB(e.loaded)} / ${fmtMB(e.total)}`;
+  };
+  xhr.upload.onload=()=>{ // transfer selesai, server lagi membaca & memproses file
+    $('#upBar').firstElementChild.style.width='100%'; $('#upPct').textContent='';
+    $('#upBar').classList.add('indet');
+    $('#upStatus').innerHTML=`<i class="spin"></i>file diterima — server sedang membaca &amp; memproses ${files.length} file…`;
+    $('#dropBusy').innerHTML=`<i class="spin"></i>Memproses ${files.length} file…`;
+  };
+  const done=()=>{ uploading=false; drop.classList.remove('busy'); $('#fileInput').disabled=false; $('#upProg').classList.remove('on'); $('#upBar').classList.remove('indet'); $('#dropBusy').innerHTML=''; };
+  const fail=msg=>{ done(); $('#upResult').innerHTML='<span class="neg">gagal: '+esc(msg)+'</span>'; };
+  xhr.onerror=()=>fail('koneksi terputus');
+  xhr.onabort=()=>fail('dibatalkan');
+  xhr.onload=()=>{
+    if(xhr.status===401){ location.href='/login'; return; }
+    if(xhr.status<200||xhr.status>=300){ let m=xhr.statusText||('HTTP '+xhr.status); try{ m=JSON.parse(xhr.responseText).detail||m }catch(e){} return fail(m); }
+    let res; try{ res=JSON.parse(xhr.responseText); }catch(e){ return fail('respons server tidak valid'); }
+    done();
+    const nOk=res.filter(r=>r.ok).length;
+    $('#upResult').innerHTML=`<b>Masuk ke toko ${esc(t)}:</b> <span class="pill ${nOk===res.length?'ok':nOk?'warn':'bad'}">${nOk}/${res.length} berhasil</span><br>`+res.map(r=>`${r.ok?'✅':'⚠️'} ${esc(r.file)} — ${esc(r.ok?r.kind:r.msg)}`).join('<br>');
+    toast(nOk===res.length?`${nOk} file berhasil diunggah`:`${nOk}/${res.length} file berhasil, cek detailnya`);
     loadFiles(); loadToko();
-  }catch(e){ $('#upResult').textContent='gagal: '+e.message; }
+  };
+  xhr.send(fd);
 }
 
 // scan folder
