@@ -15,7 +15,7 @@ sys.path.insert(0, ROOT)
 
 TMP = tempfile.mkdtemp(prefix="sa-test-")
 os.environ.update(SA_MODE="server", SA_DATA_DIR=TMP, SA_DB_URL="sqlite:///" + os.path.join(TMP, "t.db"),
-                  SA_ADMIN_USER="farras", SA_ADMIN_PASS="rahasia123", SA_SECRET="x" * 32,
+                  SA_ADMIN_USER="farras", SA_ADMIN_PASS="rahasia-tim-2026", SA_SECRET="x" * 32,
                   SA_GOOGLE_CLIENT_ID="id", SA_GOOGLE_CLIENT_SECRET="secret", SA_BASE_URL="https://apps.test")
 
 import db, auth, app as appmod   # noqa: E402
@@ -51,7 +51,7 @@ def invite_token(link):
 
 def test_bootstrap_and_password_login():
     assert auth.bootstrap_from_env() == "farras"
-    c = login_pw(client(), "farras", "rahasia123")
+    c = login_pw(client(), "farras", "rahasia-tim-2026")
     me = c.get("/api/me").json()
     assert me["user"] == "farras" and me["role"] == "admin" and me["workspace"]["id"] == 1
     assert me["workspace"]["name"] == "Mierakigai"
@@ -64,7 +64,7 @@ def test_bootstrap_and_password_login():
 def test_landing_for_visitors_app_for_users():
     r = client().get("/")
     assert r.status_code == 200 and "Daftar gratis" in r.text and "Sales Akrual" in r.text
-    c = login_pw(client(), "farras", "rahasia123")
+    c = login_pw(client(), "farras", "rahasia-tim-2026")
     r2 = c.get("/")
     assert r2.status_code == 200 and "Daftar gratis" not in r2.text and 'id="tblFiles"' in r2.text
     # halaman app tetap butuh login lewat API
@@ -100,7 +100,7 @@ def test_google_signup_creates_isolated_workspace():
     db.set_ws(1)
     assert db.archive_dir("Eltahj") == os.path.join(TMP, "Eltahj")
     # Mierakigai tetap hanya melihat tokonya sendiri; anggota pun hanya workspace sendiri
-    c1 = login_pw(client(), "farras", "rahasia123")
+    c1 = login_pw(client(), "farras", "rahasia-tim-2026")
     assert [t["name"] for t in c1.get("/api/toko").json()] == ["Eltahj"]
     assert [u["name"] for u in c1.get("/api/users").json()] == ["farras"]
     assert [u["name"] for u in c2.get("/api/users").json()] == ["andi@gmail.com"]
@@ -110,7 +110,7 @@ def test_google_signup_creates_isolated_workspace():
 
 
 def test_invite_joins_existing_workspace():
-    c1 = login_pw(client(), "farras", "rahasia123")
+    c1 = login_pw(client(), "farras", "rahasia-tim-2026")
     r = c1.post("/api/invites", json=dict(email="Rina@Gmail.com", role="user"))
     assert r.status_code == 200 and r.json()["email"] == "rina@gmail.com"
     assert r.json()["mail"] == "off" and r.json()["link"].startswith("https://apps.test/undangan?t=")   # SMTP tidak diisi → tautan manual
@@ -186,7 +186,7 @@ def test_login_mode_rejects_unknown_email_signup_mode_needs_form():
 
 
 def test_superadmin_workspace_management():
-    c1 = login_pw(client(), "farras", "rahasia123")
+    c1 = login_pw(client(), "farras", "rahasia-tim-2026")
     assert c1.get("/api/me").json()["superadmin"] is True
     rows = c1.get("/api/admin/workspaces").json()
     ids = {w["name"]: w["id"] for w in rows}
@@ -253,7 +253,7 @@ def test_schema_migration_from_old_database():
 
 
 def test_z_invite_token_and_email_checks():
-    c1 = login_pw(client(), "farras", "rahasia123")
+    c1 = login_pw(client(), "farras", "rahasia-tim-2026")
     t = invite_token(c1.post("/api/invites", json=dict(email="budi@gmail.com", role="admin")).json()["link"])
     # token dipalsukan / rusak
     assert client().get("/api/undangan", params=dict(t=t[:-4] + "AAAA")).json()["error"]
@@ -262,7 +262,7 @@ def test_z_invite_token_and_email_checks():
     c4 = client(); c4.cookies.set(auth.SIGNUP_COOKIE, auth.make_pending(profile("sub-x", "orang-lain@gmail.com")))
     assert c4.post("/api/undangan/terima", json=dict(t=t)).status_code == 403
     assert c4.post("/api/undangan/tolak", json=dict(t=t)).status_code == 403
-    with_pw = login_pw(client(), "farras", "rahasia123")
+    with_pw = login_pw(client(), "farras", "rahasia-tim-2026")
     assert with_pw.post("/api/undangan/terima", json=dict(t=t)).status_code == 403
     # jalur tombol "Terima & masuk dengan Google": profil email lain ditolak, email yang benar diterima dengan role admin
     try:
@@ -289,7 +289,7 @@ def test_z_existing_account_accepts_invite_and_moves_workspace():
     assert login_google(cm, "sub-miftah", "miftah@mierakigai.com", "Miftah") == "created"
     old_ws = cm.get("/api/me").json()["workspace"]["id"]
     assert old_ws != 1
-    c1 = login_pw(client(), "farras", "rahasia123")
+    c1 = login_pw(client(), "farras", "rahasia-tim-2026")
     ws1 = c1.get("/api/me").json()["workspace"]["name"]      # sudah diganti jadi "PT Mierakigai" oleh tes sebelumnya
     link = c1.post("/api/invites", json=dict(email="miftah@mierakigai.com", role="user")).json()["link"]
     t = invite_token(link)
@@ -341,6 +341,44 @@ def test_z_existing_account_accepts_invite_and_moves_workspace():
     # undangan ke email yang sudah anggota ditolak; terima ulang tautan lama → error (undangan sudah terpakai)
     assert c1.post("/api/invites", json=dict(email="miftah@mierakigai.com")).status_code == 400
     assert cm.post("/api/undangan/terima", json=dict(t=t)).status_code == 400
+
+
+def test_z_password_policy_and_account_lockout():
+    c1 = login_pw(client(), "farras", "rahasia-tim-2026")
+    # aturan password: minimal 12 karakter, bukan kata sandi umum / huruf berulang
+    for weak in ("pendek123", "password1234", "aaaaaaaaaaaa"):
+        assert c1.post("/api/users/password", json=dict(name="farras", password=weak)).status_code == 400, weak
+    # buat akun password lalu salah 5x → akun dikunci, meski IP berbeda-beda (header X-Forwarded-For)
+    assert c1.post("/api/users", json=dict(name="budi", password="kata-sandi-budi-99", role="user")).status_code == 200
+    for i in range(auth.LOCK_AFTER):
+        r = client().post("/api/login", json=dict(username="budi", password="salah-terus-" + str(i)),
+                          headers={"X-Forwarded-For": f"10.0.{i}.{i}"})
+        assert r.status_code == 401, r.text
+    assert db.users_load()["budi"]["lock_until"] > 0
+    # password BENAR pun ditolak selama terkunci, dengan pesan kunci (429)
+    r = client().post("/api/login", json=dict(username="budi", password="kata-sandi-budi-99"), headers={"X-Forwarded-For": "10.9.9.9"})
+    assert r.status_code == 429 and "dikunci" in r.json()["detail"], r.text
+    # kunci lewat (simulasi) → login berhasil dan hitungan di-reset
+    with db.engine().begin() as cx:
+        cx.execute(sa.text("UPDATE app_user SET lock_until = 1 WHERE name = 'budi'"))
+    r = client().post("/api/login", json=dict(username="budi", password="kata-sandi-budi-99"), headers={"X-Forwarded-For": "10.9.9.8"})
+    assert r.status_code == 200, r.text
+    u = db.users_load()["budi"]
+    assert u["fail_n"] == 0 and u["lock_until"] == 0
+    # akun Google (tanpa password) tidak pernah terkunci lewat jalur password: selalu 401 biasa
+    for i in range(auth.LOCK_AFTER + 1):
+        assert client().post("/api/login", json=dict(username="andi@gmail.com", password="x" * 12),
+                             headers={"X-Forwarded-For": f"10.1.{i}.1"}).status_code == 401
+    assert db.users_load()["andi@gmail.com"]["lock_until"] == 0
+
+
+def test_z_security_headers():
+    r = client().get("/login")
+    h = r.headers
+    assert h["x-frame-options"] == "DENY" and h["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in h["content-security-policy"] and "https://cdnjs.cloudflare.com" in h["content-security-policy"]
+    assert "referrer-policy" in h and "permissions-policy" in h
+    assert "content-security-policy" in client().get("/api/login-config").headers
 
 
 if __name__ == "__main__":

@@ -96,8 +96,7 @@ def add_user(name, password, role="user", workspace_id=None):
     name = norm_name(name)
     if not name:
         raise ValueError("nama pengguna kosong / hanya huruf, angka, titik, strip")
-    if len(password or "") < 8:
-        raise ValueError("password minimal 8 karakter")
+    check_password(password)
     if role not in ROLES:
         raise ValueError("role harus admin atau user")
     ws = int(workspace_id or db.current_ws())
@@ -111,9 +110,23 @@ def add_user(name, password, role="user", workspace_id=None):
     return name
 
 
+PASSWORD_MIN = 12
+_WEAK_PARTS = ("password", "passw0rd", "katasandi", "kata sandi", "qwerty", "asdfgh", "12345678", "87654321", "abcdefgh", "11111111")
+
+
+def check_password(password):
+    """Aturan password akun lokal: minimal PASSWORD_MIN karakter, cukup beragam, tidak memuat pola umum
+    (password, qwerty, 12345678, ...)."""
+    p = password or ""
+    if len(p) < PASSWORD_MIN:
+        raise ValueError(f"password minimal {PASSWORD_MIN} karakter")
+    low = p.lower()
+    if len(set(low)) < 5 or any(w in low for w in _WEAK_PARTS):
+        raise ValueError("password terlalu mudah ditebak — hindari 'password', 'qwerty', deret angka, atau huruf berulang")
+
+
 def set_password(name, password):
-    if len(password or "") < 8:
-        raise ValueError("password minimal 8 karakter")
+    check_password(password)
     with _lock:
         users = load_users()
         if name not in users:
@@ -428,15 +441,30 @@ def _record_failure(ip):
         _fail.setdefault(ip, []).append(time.time())
 
 
+LOCK_AFTER = 5          # login password gagal beruntun per AKUN sebelum dikunci (disimpan di database, tahan restart)
+LOCK_MINUTES = 15
+
+
 def login(name, password, ip="?"):
-    """Kembalikan token sesi kalau benar; None kalau salah; raise kalau terlalu banyak percobaan."""
+    """Kembalikan token sesi kalau benar; None kalau salah; raise PermissionError kalau IP atau akun sedang dibatasi.
+    Dua lapis: per IP (10 gagal / 10 menit, di memori) dan per akun (LOCK_AFTER gagal beruntun → kunci LOCK_MINUTES,
+    di database) supaya tebak-tebakan dari banyak IP pun tertahan."""
     if _too_many_failures(ip):
         raise PermissionError("terlalu banyak percobaan gagal — coba lagi 10 menit lagi")
     name = norm_name(name)
     u = load_users().get(name)
+    now = int(time.time())
+    if u and int(u.get("lock_until") or 0) > now:
+        _record_failure(ip)
+        sisa = max(1, (int(u["lock_until"]) - now + 59) // 60)
+        raise PermissionError(f"akun dikunci sementara karena terlalu banyak percobaan gagal — coba lagi {sisa} menit lagi")
     if not u or not u.get("hash") or not _verify(password or "", u["hash"]):   # hash "" = akun Google, tanpa password
         _record_failure(ip)
+        if u and u.get("hash"):
+            db.user_login_fail(name, LOCK_AFTER, LOCK_MINUTES * 60)
         return None
+    if int(u.get("fail_n") or 0) or int(u.get("lock_until") or 0):
+        db.user_login_ok(name)
     return make_token(name)
 
 

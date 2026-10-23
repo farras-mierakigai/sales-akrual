@@ -1,5 +1,10 @@
 {$SA_DOMAIN} {
 	encode gzip
+	header {
+		# paksa HTTPS setahun ke depan (browser menolak http:// setelah kunjungan pertama)
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
 	request_body {
 		max_size 300MB
 	}

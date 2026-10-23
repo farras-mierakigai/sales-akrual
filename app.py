@@ -46,6 +46,29 @@ def current_user(request: Request):
     return auth.verify_token(tok) if tok else None
 
 
+# Header keamanan untuk semua respons. HSTS dipasang di Caddy (hanya bermakna di HTTPS).
+# CSP: skrip hanya dari situs sendiri + cdnjs (Chart.js), style/font dari Google Fonts, gambar profil Google;
+# halaman tidak boleh dibingkai situs lain (clickjacking). Inline script/style masih diizinkan karena index.html memakainya.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+                               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                               "img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self'; "
+                               "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    for k, v in SECURITY_HEADERS.items():
+        resp.headers.setdefault(k, v)
+    return resp
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
@@ -987,7 +1010,7 @@ def _cli(argv):
         if len(argv) < 2:
             sys.exit("pakai: python3 app.py adduser <nama> [--admin]")
         name = argv[1]
-        pw = os.environ.get("SA_NEW_PASS") or getpass.getpass("password (min 8): ")
+        pw = os.environ.get("SA_NEW_PASS") or getpass.getpass(f"password (min {auth.PASSWORD_MIN}): ")
         if not os.environ.get("SA_NEW_PASS") and getpass.getpass("ulangi password: ") != pw:
             sys.exit("password tidak sama")
         if cmd == "adduser":

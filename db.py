@@ -204,9 +204,11 @@ app_user = Table(
     Column("google_sub", String(64), nullable=False, default=""),
     Column("display_name", String(120), nullable=False, default=""),
     Column("picture", Text, nullable=False, default=""),
+    Column("fail_n", Integer, nullable=False, default=0),       # login password gagal beruntun (reset saat berhasil)
+    Column("lock_until", Integer, nullable=False, default=0),   # epoch: akun dikunci sampai waktu ini (0 = tidak)
 )
 
-USER_EXTRA_COLS = ("workspace_id", "email", "google_sub", "display_name", "picture")
+USER_EXTRA_COLS = ("workspace_id", "email", "google_sub", "display_name", "picture", "fail_n", "lock_until")
 
 
 def _migrate_schema(eng):
@@ -232,7 +234,8 @@ def _migrate_schema(eng):
         cols_user = {c["name"] for c in sa.inspect(cx).get_columns("app_user")}
         for col, ddl in (("workspace_id", f"INTEGER NOT NULL DEFAULT {DEFAULT_WS}"), ("email", "VARCHAR(254) NOT NULL DEFAULT ''"),
                          ("google_sub", "VARCHAR(64) NOT NULL DEFAULT ''"), ("display_name", "VARCHAR(120) NOT NULL DEFAULT ''"),
-                         ("picture", "TEXT NOT NULL DEFAULT ''")):
+                         ("picture", "TEXT NOT NULL DEFAULT ''"), ("fail_n", "INTEGER NOT NULL DEFAULT 0"),
+                         ("lock_until", "INTEGER NOT NULL DEFAULT 0")):
             if col not in cols_user:
                 run(cx, f"ALTER TABLE app_user ADD COLUMN {col} {ddl}")
         if pg:
@@ -589,7 +592,8 @@ def export_settings(name):
 def _user_row(r):
     return dict(hash=r["hash"], role=r["role"], created=r["created"], pw_changed=r["pw_changed"],
                 workspace_id=int(r["workspace_id"] or DEFAULT_WS), email=r["email"] or "", google_sub=r["google_sub"] or "",
-                display_name=r["display_name"] or "", picture=r["picture"] or "")
+                display_name=r["display_name"] or "", picture=r["picture"] or "",
+                fail_n=int(r["fail_n"] or 0), lock_until=int(r["lock_until"] or 0))
 
 
 def users_load():
@@ -603,7 +607,8 @@ def _user_values(k, v):
     return dict(name=k, hash=v.get("hash", ""), role=v.get("role", "user"), created=int(v.get("created") or 0),
                 pw_changed=int(v.get("pw_changed") or 0), workspace_id=int(v.get("workspace_id") or DEFAULT_WS),
                 email=v.get("email", "") or "", google_sub=v.get("google_sub", "") or "",
-                display_name=v.get("display_name", "") or "", picture=v.get("picture", "") or "")
+                display_name=v.get("display_name", "") or "", picture=v.get("picture", "") or "",
+                fail_n=int(v.get("fail_n") or 0), lock_until=int(v.get("lock_until") or 0))
 
 
 def users_save(users):
@@ -619,6 +624,24 @@ def user_upsert(name, v):
     with engine().begin() as cx:
         cx.execute(delete(app_user).where(app_user.c.name == name))
         cx.execute(insert(app_user).values(**_user_values(name, v)))
+
+
+def user_login_fail(name, lock_after, lock_seconds):
+    """Catat login password gagal. Setelah `lock_after` gagal beruntun akun dikunci `lock_seconds` (hitungan di-reset).
+    → epoch lock_until yang baru (0 = belum dikunci)."""
+    now = int(dt.datetime.now().timestamp())
+    with engine().begin() as cx:
+        n = int(cx.execute(select(app_user.c.fail_n).where(app_user.c.name == name)).scalar() or 0) + 1
+        vals = dict(fail_n=n, lock_until=0)
+        if n >= int(lock_after):
+            vals = dict(fail_n=0, lock_until=now + int(lock_seconds))
+        cx.execute(update(app_user).where(app_user.c.name == name).values(**vals))
+    return vals["lock_until"]
+
+
+def user_login_ok(name):
+    with engine().begin() as cx:
+        cx.execute(update(app_user).where(app_user.c.name == name).values(fail_n=0, lock_until=0))
 
 
 # ---------------------------------------------------------------- workspace & undangan

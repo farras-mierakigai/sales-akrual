@@ -306,7 +306,7 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
       <div class="small" id="invResult" style="display:none;margin-top:4px"></div>
       <div class="tblwrap" style="max-height:300px;margin-top:10px"><table id="tblUsers" class="filelist"></table></div>
       <details style="margin-top:10px"><summary class="small" style="cursor:pointer">Tambah akun dengan password (tanpa Google)</summary>
-      <div class="row" style="margin-top:8px"><input type="text" id="nuName" placeholder="nama pengguna, mis. rina" style="min-width:160px"><input type="text" id="nuPass" placeholder="password awal (min 8)" style="min-width:200px"><select id="nuRole" style="min-width:110px"><option value="user">user</option><option value="admin">admin</option></select><button id="btnAddUser">+ Tambah pengguna</button></div></details>
+      <div class="row" style="margin-top:8px"><input type="text" id="nuName" placeholder="nama pengguna, mis. rina" style="min-width:160px"><input type="text" id="nuPass" placeholder="password awal (min 12)" style="min-width:200px"><select id="nuRole" style="min-width:110px"><option value="user">user</option><option value="admin">admin</option></select><button id="btnAddUser">+ Tambah pengguna</button></div></details>
     </div>
   </div>
   </div><!-- /main -->
@@ -381,10 +381,10 @@ async function invResend(email){ try{ const r=await post('/api/invites/resend',{
 async function invDel(email){ try{ await api('/api/invites?email='+encodeURIComponent(email),{method:'DELETE'}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
 $('#btnWsRename').onclick=async()=>{ const name=prompt('Nama workspace / perusahaan:', (ME.workspace&&ME.workspace.name)||''); if(!name) return; try{ const r=await post('/api/workspace',{name}); ME.workspace.name=r.name; $('#wsName').textContent=r.name; $('#meWs').textContent=r.name; toast('nama workspace diganti'); }catch(e){ toast('gagal: '+e.message); } };
 $('#btnAddUser').onclick=async()=>{ const name=$('#nuName').value.trim(), password=$('#nuPass').value, role=$('#nuRole').value; if(!name||!password) return toast('isi nama & password'); try{ const r=await post('/api/users',{name,password,role}); toast('pengguna dibuat: '+r.name); $('#nuName').value=''; $('#nuPass').value=''; loadUsers(); }catch(e){ toast('gagal: '+e.message); } };
-async function userPw(name){ const password=prompt('Password baru untuk '+name+' (min 8 karakter):'); if(!password) return; try{ await post('/api/users/password',{name,password}); toast('password '+name+' diganti'); }catch(e){ toast('gagal: '+e.message); } }
+async function userPw(name){ const password=prompt('Password baru untuk '+name+' (min 12 karakter):'); if(!password) return; try{ await post('/api/users/password',{name,password}); toast('password '+name+' diganti'); }catch(e){ toast('gagal: '+e.message); } }
 async function userRole(name,role){ if(!confirm('Ubah '+name+' jadi '+role+'?')) return; try{ await post('/api/users/role',{name,role}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
 async function userDel(name){ if(!confirm('Hapus pengguna '+name+'? Sesi login-nya langsung mati.')) return; try{ await api('/api/users?name='+encodeURIComponent(name),{method:'DELETE'}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
-$('#btnMyPw').onclick=async()=>{ const password=prompt('Password baru untuk akun '+ME.user+' (min 8 karakter):'); if(!password) return; try{ await post('/api/users/password',{name:ME.user,password}); toast('password diganti — masuk lagi dengan password baru'); setTimeout(()=>location.href='/login',1200); }catch(e){ toast('gagal: '+e.message); } };
+$('#btnMyPw').onclick=async()=>{ const password=prompt('Password baru untuk akun '+ME.user+' (min 12 karakter):'); if(!password) return; try{ await post('/api/users/password',{name:ME.user,password}); toast('password diganti — masuk lagi dengan password baru'); setTimeout(()=>location.href='/login',1200); }catch(e){ toast('gagal: '+e.message); } };
 $('#btnLogout').onclick=async()=>{ try{ await post('/api/logout',{}); }catch(e){} location.href='/login'; };
 
 // ---------- tabs
