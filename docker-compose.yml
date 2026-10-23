@@ -29,6 +29,12 @@ services:
       SA_MODE: server
       SA_DATA_DIR: /data
       SA_DB_URL: postgresql+psycopg://sales:${SA_DB_PASS}@db:5432/sales
+      # Email undangan dikirim langsung dari server ini (DKIM; kunci dibuat otomatis di /data/.dkim).
+      # Bisa ditimpa lewat .env. SA_MAIL_HELO = nama PTR IP server (FCrDNS), wajib untuk Gmail.
+      SA_MAIL_FROM: ${SA_MAIL_FROM:-noreply@mierakigai.com}
+      SA_MAIL_REPLY_TO: ${SA_MAIL_REPLY_TO:-farras@mierakigai.com}
+      SA_MAIL_HELO: ${SA_MAIL_HELO:-vmi3688841.contaboserver.net}
+      SA_DKIM_SELECTOR: ${SA_DKIM_SELECTOR:-akrual}
     volumes:
       - ./data:/data              # arsip file export mentah (bukan database)
     expose:

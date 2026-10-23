@@ -959,9 +959,21 @@ def api_audit_xlsx(toko: str, m_from: Optional[str] = None, m_to: Optional[str] 
 
 
 def _cli(argv):
-    """python3 app.py adduser <nama> [--admin] | passwd <nama> | users | export-arsip (tulis hpp/ads JSON ke folder arsip)"""
+    """python3 app.py adduser <nama> [--admin] | passwd <nama> | users | export-arsip (tulis hpp/ads JSON ke folder arsip)
+    | mail-dns (record DNS pengirim email: DKIM/SPF/DMARC) | mail-test <email> (kirim email percobaan)"""
     import getpass
     cmd = argv[0]
+    if cmd == "mail-dns":
+        print(f"mode email: {mailer.mode()}  pengirim: {mailer.from_addr() or '-'}  selector: {mailer.selector()}")
+        for r in mailer.dns_records(os.environ.get("SA_SERVER_IP", "")):
+            print(f"{r['type']} {r['name']}\n    {r['content']}")
+        return
+    if cmd == "mail-test":
+        if len(argv) < 2:
+            sys.exit("pakai: python3 app.py mail-test <email>")
+        ok, msg = mailer.send(argv[1], "Tes email Sales Akrual", "Kalau email ini sampai, pengiriman dari server sudah bekerja.\n\n— Sales Akrual")
+        print("terkirim" if ok else f"GAGAL: {msg}")
+        sys.exit(0 if ok else 1)
     if cmd == "export-arsip":
         for t in db.list_toko():
             db.export_settings(t)
@@ -998,4 +1010,9 @@ if __name__ == "__main__":
     if made:
         print(f"admin pertama dibuat dari env: {made}")
     print(f"Sales Akrual [{auth.mode()}] db={db.db_url().split('@')[-1]} arsip={analysis.DATA} → http://{host}:{port}")
+    if mailer.mode() == "direct":
+        # siapkan kunci DKIM sejak awal (bukan saat email pertama) dan tampilkan record TXT-nya di log
+        print(f"email: kirim langsung sebagai {mailer.from_addr()} — TXT {mailer.selector()}._domainkey.{mailer.from_domain()} = {mailer.dkim_txt() or 'GAGAL membuat kunci'}")
+    else:
+        print(f"email: mode {mailer.mode()}")
     uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*")
