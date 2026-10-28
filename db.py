@@ -998,7 +998,7 @@ def ticket_get(tid):
         files = cx.execute(select(ticket_file).where(ticket_file.c.ticket_id == int(tid)).order_by(ticket_file.c.id)).mappings().all()
     by_msg = {}
     for f in files:
-        by_msg.setdefault(f["msg_id"], []).append(dict(id=f["id"], name=f["name"], mime=f["mime"], size=f["size"]))
+        by_msg.setdefault(f["msg_id"], []).append(dict(id=f["id"], name=f["name"], mime=f["mime"], size=f["size"], path=f["path"]))
     return dict(id=t["id"], workspace_id=t["workspace_id"], workspace=t["workspace"], judul=t["judul"], kategori=t["kategori"],
                 toko=t["toko"], status=t["status"], created_by=t["created_by"], created=t["created_at"].isoformat(),
                 updated=t["updated_at"].isoformat(),

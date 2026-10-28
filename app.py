@@ -1184,6 +1184,11 @@ def _cli(argv):
     import getpass
     cmd = argv[0]
     if cmd == "tiket":
+        import json as _json
+        args_ = [a for a in argv[1:] if a != "--json"]
+        if "--json" in argv:        # dipakai deploy/tiket-bot.sh
+            print(_json.dumps(db.ticket_list(None) if not args_ else (db.ticket_get(int(args_[0])) or {}), ensure_ascii=False))
+            return
         if len(argv) < 2:
             for t in db.ticket_list(None):
                 print(f"#{t['id']:<4} {t['status']:<9} {t['kategori']:<10} {t['workspace'][:18]:<18} {t['updated'][:16]}  {t['judul']}  "
@@ -1206,7 +1211,8 @@ def _cli(argv):
         t = db.ticket_get(int(argv[1]))
         if not t:
             sys.exit("tiket tidak ada")
-        db.ticket_msg_add(t["id"], auth.superadmin_name() or "support", "Tim Sales Akrual", True, " ".join(argv[2:]).strip())
+        db.ticket_msg_add(t["id"], auth.superadmin_name() or "support", os.environ.get("SA_REPLY_NAME") or "Tim Sales Akrual", True,
+                          " ".join(argv[2:]).strip())
         creator = db.ws_members(t["workspace_id"]).get(t["created_by"]) or {}
         to = creator.get("email") or (t["created_by"] if "@" in t["created_by"] else "")
         if to and mailer.enabled():
