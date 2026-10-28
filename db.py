@@ -74,6 +74,44 @@ ws_invite = Table(
     UniqueConstraint("workspace_id", "email", name="uq_ws_invite"),
 )
 
+# tiket dukungan / masukan: satu tiket = satu utas pesan (pesan pertama = isi tiket), lampiran per pesan.
+# Pengguna hanya melihat tiket workspace-nya; superadmin melihat semua dan membalas sebagai "support".
+ticket = Table(
+    "ticket", meta,
+    Column("id", Integer, primary_key=True),
+    Column("workspace_id", Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False),
+    Column("judul", String(200), nullable=False),
+    Column("kategori", String(24), nullable=False, default="lain"),      # bug | saran | pertanyaan | lain
+    Column("toko", String(120), nullable=False, default=""),             # konteks (opsional)
+    Column("status", String(16), nullable=False, default="open"),        # open | answered | closed
+    Column("created_by", String(254), nullable=False, default=""),       # app_user.name pembuat
+    Column("created_at", DateTime, nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
+
+ticket_msg = Table(
+    "ticket_msg", meta,
+    Column("id", Integer, primary_key=True),
+    Column("ticket_id", Integer, ForeignKey("ticket.id", ondelete="CASCADE"), nullable=False),
+    Column("author", String(254), nullable=False, default=""),
+    Column("author_name", String(120), nullable=False, default=""),
+    Column("support", Boolean, nullable=False, default=False),           # True = balasan tim Sales Akrual
+    Column("isi", Text, nullable=False, default=""),
+    Column("created_at", DateTime, nullable=False),
+)
+
+ticket_file = Table(
+    "ticket_file", meta,
+    Column("id", Integer, primary_key=True),
+    Column("ticket_id", Integer, ForeignKey("ticket.id", ondelete="CASCADE"), nullable=False),
+    Column("msg_id", Integer, ForeignKey("ticket_msg.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text, nullable=False),                                # nama asli dari pengguna
+    Column("path", Text, nullable=False),                                # relatif terhadap DATA
+    Column("mime", String(80), nullable=False),
+    Column("size", Integer, nullable=False, default=0),
+    Column("created_at", DateTime, nullable=False),
+)
+
 toko = Table(
     "toko", meta,
     Column("id", Integer, primary_key=True),
@@ -814,6 +852,111 @@ def invite_pop(email):
             return None
         cx.execute(delete(ws_invite).where(ws_invite.c.id == r["id"]))
         return dict(workspace_id=r["workspace_id"], role=r["role"])
+
+
+# ---------------------------------------------------------------- tiket
+
+TICKET_STATUS = ("open", "answered", "closed")
+TICKET_KATEGORI = ("bug", "saran", "pertanyaan", "lain")
+
+
+def ticket_dir(tid):
+    return os.path.join(DATA, "_tiket", str(int(tid)))
+
+
+def ticket_create(ws_id, judul, kategori, toko, author, author_name, isi):
+    """Tiket baru + pesan pertama. → (ticket_id, msg_id)"""
+    now = dt.datetime.now()
+    with engine().begin() as cx:
+        tid = cx.execute(insert(ticket).values(workspace_id=int(ws_id), judul=judul, kategori=kategori, toko=toko, status="open",
+                                               created_by=author, created_at=now, updated_at=now)).inserted_primary_key[0]
+        mid = cx.execute(insert(ticket_msg).values(ticket_id=tid, author=author, author_name=author_name, support=False,
+                                                   isi=isi, created_at=now)).inserted_primary_key[0]
+    return tid, mid
+
+
+def ticket_msg_add(tid, author, author_name, support, isi):
+    """Balasan. Balasan support → status 'answered'; balasan pengguna → kembali 'open'. → msg_id"""
+    now = dt.datetime.now()
+    with engine().begin() as cx:
+        mid = cx.execute(insert(ticket_msg).values(ticket_id=int(tid), author=author, author_name=author_name, support=bool(support),
+                                                   isi=isi, created_at=now)).inserted_primary_key[0]
+        cx.execute(update(ticket).where(ticket.c.id == int(tid)).values(updated_at=now, status="answered" if support else "open"))
+    return mid
+
+
+def ticket_file_add(tid, mid, name, path, mime, size):
+    with engine().begin() as cx:
+        return cx.execute(insert(ticket_file).values(ticket_id=int(tid), msg_id=int(mid), name=name, path=path, mime=mime,
+                                                     size=int(size), created_at=dt.datetime.now())).inserted_primary_key[0]
+
+
+def ticket_set_status(tid, status):
+    if status not in TICKET_STATUS:
+        raise ValueError("status tidak dikenal")
+    with engine().begin() as cx:
+        cx.execute(update(ticket).where(ticket.c.id == int(tid)).values(status=status, updated_at=dt.datetime.now()))
+
+
+def ticket_get(tid):
+    """Tiket + semua pesan (urut waktu) + lampiran per pesan, atau None. Pemanggil yang memeriksa hak akses."""
+    with engine().connect() as cx:
+        t = cx.execute(select(ticket, workspace.c.name.label("workspace")).select_from(ticket.join(workspace))
+                       .where(ticket.c.id == int(tid))).mappings().first()
+        if not t:
+            return None
+        msgs = cx.execute(select(ticket_msg).where(ticket_msg.c.ticket_id == int(tid)).order_by(ticket_msg.c.id)).mappings().all()
+        files = cx.execute(select(ticket_file).where(ticket_file.c.ticket_id == int(tid)).order_by(ticket_file.c.id)).mappings().all()
+    by_msg = {}
+    for f in files:
+        by_msg.setdefault(f["msg_id"], []).append(dict(id=f["id"], name=f["name"], mime=f["mime"], size=f["size"]))
+    return dict(id=t["id"], workspace_id=t["workspace_id"], workspace=t["workspace"], judul=t["judul"], kategori=t["kategori"],
+                toko=t["toko"], status=t["status"], created_by=t["created_by"], created=t["created_at"].isoformat(),
+                updated=t["updated_at"].isoformat(),
+                messages=[dict(id=m["id"], author=m["author"], author_name=m["author_name"], support=bool(m["support"]), isi=m["isi"],
+                               created=m["created_at"].isoformat(), files=by_msg.get(m["id"], [])) for m in msgs])
+
+
+def ticket_list(ws_id=None):
+    """Daftar tiket (terbaru dulu). ws_id None = semua workspace (superadmin)."""
+    q = select(ticket, workspace.c.name.label("workspace")).select_from(ticket.join(workspace)).order_by(ticket.c.updated_at.desc())
+    if ws_id is not None:
+        q = q.where(ticket.c.workspace_id == int(ws_id))
+    with engine().connect() as cx:
+        rows = cx.execute(q).mappings().all()
+        ids = [r["id"] for r in rows]
+        n_msg, n_file, last = {}, {}, {}
+        if ids:
+            n_msg = dict(cx.execute(select(ticket_msg.c.ticket_id, func.count()).where(ticket_msg.c.ticket_id.in_(ids))
+                                    .group_by(ticket_msg.c.ticket_id)).all())
+            n_file = dict(cx.execute(select(ticket_file.c.ticket_id, func.count()).where(ticket_file.c.ticket_id.in_(ids))
+                                     .group_by(ticket_file.c.ticket_id)).all())
+            for m in cx.execute(select(ticket_msg).where(ticket_msg.c.ticket_id.in_(ids)).order_by(ticket_msg.c.id)).mappings():
+                last[m["ticket_id"]] = m
+    out = []
+    for r in rows:
+        m = last.get(r["id"])
+        out.append(dict(id=r["id"], workspace_id=r["workspace_id"], workspace=r["workspace"], judul=r["judul"], kategori=r["kategori"],
+                        toko=r["toko"], status=r["status"], created_by=r["created_by"], created=r["created_at"].isoformat(),
+                        updated=r["updated_at"].isoformat(), messages=int(n_msg.get(r["id"], 0)), files=int(n_file.get(r["id"], 0)),
+                        last_by=(m["author_name"] or m["author"]) if m else "", last_support=bool(m["support"]) if m else False))
+    return out
+
+
+def ticket_file_get(fid):
+    with engine().connect() as cx:
+        r = cx.execute(select(ticket_file, ticket.c.workspace_id).select_from(ticket_file.join(ticket))
+                       .where(ticket_file.c.id == int(fid))).mappings().first()
+    return dict(r) if r else None
+
+
+def ticket_delete(tid):
+    with engine().begin() as cx:
+        cx.execute(delete(ticket).where(ticket.c.id == int(tid)))
+    d = ticket_dir(tid)
+    if os.path.isdir(d):
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def stats():

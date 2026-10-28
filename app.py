@@ -983,11 +983,219 @@ def api_audit_xlsx(toko: str, m_from: Optional[str] = None, m_to: Optional[str] 
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+# ---------------------------------------------------------------- tiket (dukungan & masukan)
+# Lampiran: gambar/PDF, dicek dari isi file (bukan dari ekstensi/Content-Type), maks. TIKET_MAX_FILES per pesan.
+TIKET_MAX_FILES = 5
+TIKET_MAX_BYTES = 8 * 1024 * 1024
+TIKET_MAX_TEXT = 20000
+_MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png", ".png"), (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
+          (b"GIF87a", "image/gif", ".gif"), (b"GIF89a", "image/gif", ".gif"), (b"%PDF-", "application/pdf", ".pdf"))
+
+
+def _sniff(head):
+    for sig, mime, ext in _MAGIC:
+        if head.startswith(sig):
+            return mime, ext
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    return None, None
+
+
+def _tiket_notify_to():
+    return os.environ.get("SA_TICKET_NOTIFY") or os.environ.get("SA_MAIL_REPLY_TO") or "farras@mierakigai.com"
+
+
+def _tiket_mail(to, subject, text):
+    """Kirim email pemberitahuan di latar belakang; kegagalan hanya dicatat ke log."""
+    if not to or not mailer.enabled():
+        return
+    def run():
+        ok, msg = mailer.send(to, subject, text)
+        if not ok:
+            print(f"tiket: email ke {to} gagal: {msg}")
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _tiket_access(request: Request, t):
+    """Tiket milik workspace pemakai, atau superadmin. Yang lain: 404 (tidak membocorkan keberadaan tiket)."""
+    u = current_user(request)
+    if not t or not (auth.is_superadmin(u) or int(t["workspace_id"]) == int(u["workspace_id"])):
+        raise HTTPException(404, "tiket tidak ada")
+    return u
+
+
+def _tiket_save_files(tid, mid, files):
+    files = [f for f in (files or []) if f and f.filename]
+    if len(files) > TIKET_MAX_FILES:
+        raise HTTPException(400, f"maksimal {TIKET_MAX_FILES} lampiran per pesan")
+    d = db.ticket_dir(tid)
+    os.makedirs(d, exist_ok=True)
+    out = []
+    for f in files:
+        head = f.file.read(16)
+        mime, ext = _sniff(head)
+        if not mime:
+            raise HTTPException(400, f"{f.filename}: hanya gambar (PNG/JPG/GIF/WebP) atau PDF yang bisa dilampirkan")
+        f.file.seek(0, io.SEEK_END)
+        size = f.file.tell()
+        f.file.seek(0)
+        if size > TIKET_MAX_BYTES:
+            raise HTTPException(400, f"{f.filename}: lebih dari {TIKET_MAX_BYTES // (1024 * 1024)} MB")
+        name = os.path.basename(f.filename)[:120] or ("lampiran" + ext)
+        stored = f"{mid}_{secrets.token_hex(4)}{ext}"
+        with open(os.path.join(d, stored), "wb") as fh:
+            shutil.copyfileobj(f.file, fh)
+        fid = db.ticket_file_add(tid, mid, name, os.path.join("_tiket", str(tid), stored), mime, size)
+        out.append(dict(id=fid, name=name, mime=mime, size=size))
+    return out
+
+
+def _tiket_author(u):
+    return u["name"], (u.get("display_name") or u["name"])[:120]
+
+
+@app.get("/api/tiket")
+def api_tiket_list(request: Request):
+    u = current_user(request)
+    return db.ticket_list(None if auth.is_superadmin(u) else u["workspace_id"])
+
+
+@app.post("/api/tiket")
+async def api_tiket_create(request: Request, judul: str = Form(...), isi: str = Form(""), kategori: str = Form("lain"),
+                           toko: str = Form(""), files: Optional[List[UploadFile]] = File(None)):
+    u = current_user(request)
+    judul = " ".join(judul.split())[:200]
+    isi = isi.strip()[:TIKET_MAX_TEXT]
+    if not judul:
+        raise HTTPException(400, "judul tiket kosong")
+    if kategori not in db.TICKET_KATEGORI:
+        kategori = "lain"
+    author, author_name = _tiket_author(u)
+    tid, mid = db.ticket_create(u["workspace_id"], judul, kategori, toko.strip()[:120], author, author_name, isi)
+    try:
+        _tiket_save_files(tid, mid, files)
+    except HTTPException:
+        db.ticket_delete(tid)
+        raise
+    ws = db.ws_get(u["workspace_id"]) or {}
+    _tiket_mail(_tiket_notify_to(), f"[Tiket #{tid}] {judul}",
+                f"Tiket baru dari {author_name} ({author}) · workspace {ws.get('name', '')} · {kategori}"
+                f"{' · toko ' + toko if toko.strip() else ''}\n\n{isi}\n\n{_base_url(request)}/?tiket={tid}")
+    return dict(ok=True, id=tid)
+
+
+@app.get("/api/tiket/{tid}")
+def api_tiket_get(tid: int, request: Request):
+    t = db.ticket_get(tid)
+    _tiket_access(request, t)
+    return t
+
+
+@app.post("/api/tiket/{tid}/balas")
+async def api_tiket_reply(tid: int, request: Request, isi: str = Form(""), files: Optional[List[UploadFile]] = File(None)):
+    t = db.ticket_get(tid)
+    u = _tiket_access(request, t)
+    isi = isi.strip()[:TIKET_MAX_TEXT]
+    has_files = any(f and f.filename for f in (files or []))
+    if not isi and not has_files:
+        raise HTTPException(400, "balasan kosong")
+    support = auth.is_superadmin(u) and u["name"] != t["created_by"]      # superadmin membalas tiket orang lain = Tim Sales Akrual
+    author, author_name = _tiket_author(u)
+    mid = db.ticket_msg_add(tid, author, "Tim Sales Akrual" if support else author_name, support, isi)
+    _tiket_save_files(tid, mid, files)
+    if support:
+        creator = db.ws_members(t["workspace_id"]).get(t["created_by"]) or {}
+        to = creator.get("email") or (t["created_by"] if "@" in t["created_by"] else "")
+        _tiket_mail(to, f"[Tiket #{tid}] Balasan: {t['judul']}",
+                    f"Tim Sales Akrual membalas tiket Anda \"{t['judul']}\":\n\n{isi}\n\nLihat tiket: {_base_url(request)}/?tiket={tid}")
+    else:
+        _tiket_mail(_tiket_notify_to(), f"[Tiket #{tid}] Balasan: {t['judul']}",
+                    f"{author_name} ({author}) · workspace {t['workspace']}\n\n{isi}\n\n{_base_url(request)}/?tiket={tid}")
+    return dict(ok=True, id=mid)
+
+
+class TiketStatusIn(BaseModel):
+    status: str
+
+
+@app.post("/api/tiket/{tid}/status")
+def api_tiket_status(tid: int, body: TiketStatusIn, request: Request):
+    t = db.ticket_get(tid)
+    u = _tiket_access(request, t)
+    if body.status not in db.TICKET_STATUS or (body.status == "answered" and not auth.is_superadmin(u)):
+        raise HTTPException(400, "status tidak dikenal")
+    db.ticket_set_status(tid, body.status)
+    return dict(ok=True)
+
+
+@app.delete("/api/tiket/{tid}")
+def api_tiket_delete(tid: int, request: Request):
+    require_superadmin(request)
+    if not db.ticket_get(tid):
+        raise HTTPException(404, "tiket tidak ada")
+    db.ticket_delete(tid)
+    return dict(ok=True)
+
+
+@app.get("/api/tiket/file/{fid}")
+def api_tiket_file(fid: int, request: Request):
+    f = db.ticket_file_get(fid)
+    _tiket_access(request, f)
+    p = os.path.join(db.DATA, f["path"])
+    if not os.path.isfile(p):
+        raise HTTPException(404, "file lampiran sudah tidak ada")
+    inline = f["mime"].startswith("image/")
+    return FileResponse(p, media_type=f["mime"], headers={
+        "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(f['name'])}",
+        "Cache-Control": "private, max-age=3600"})
+
+
 def _cli(argv):
     """python3 app.py adduser <nama> [--admin] | passwd <nama> | users | export-arsip (tulis hpp/ads JSON ke folder arsip)
-    | mail-dns (record DNS pengirim email: DKIM/SPF/DMARC) | mail-test <email> (kirim email percobaan)"""
+    | mail-dns (record DNS pengirim email: DKIM/SPF/DMARC) | mail-test <email> (kirim email percobaan)
+    | tiket (daftar tiket) | tiket <id> (isi tiket + path lampiran) | tiket-balas <id> <teks> (balas sebagai Tim Sales Akrual)
+    | tiket-status <id> open|answered|closed"""
     import getpass
     cmd = argv[0]
+    if cmd == "tiket":
+        if len(argv) < 2:
+            for t in db.ticket_list(None):
+                print(f"#{t['id']:<4} {t['status']:<9} {t['kategori']:<10} {t['workspace'][:18]:<18} {t['updated'][:16]}  {t['judul']}  "
+                      f"({t['messages']} pesan, {t['files']} lampiran, terakhir: {t['last_by']})")
+            return
+        t = db.ticket_get(int(argv[1]))
+        if not t:
+            sys.exit("tiket tidak ada")
+        print(f"#{t['id']} [{t['status']}] {t['judul']}\nworkspace: {t['workspace']} · kategori: {t['kategori']} · toko: {t['toko'] or '-'} · "
+              f"dibuat {t['created'][:16]} oleh {t['created_by']}")
+        for m in t["messages"]:
+            print(f"\n--- {m['created'][:16]} · {'TIM' if m['support'] else m['author_name']} ({m['author']})\n{m['isi']}")
+            for f in m["files"]:
+                print(f"  [lampiran #{f['id']}] {f['name']} ({f['mime']}, {f['size']} B) → "
+                      f"{os.path.join(db.DATA, (db.ticket_file_get(f['id']) or {}).get('path', ''))}")
+        return
+    if cmd == "tiket-balas":
+        if len(argv) < 3:
+            sys.exit("pakai: python3 app.py tiket-balas <id> <teks>")
+        t = db.ticket_get(int(argv[1]))
+        if not t:
+            sys.exit("tiket tidak ada")
+        db.ticket_msg_add(t["id"], auth.superadmin_name() or "support", "Tim Sales Akrual", True, " ".join(argv[2:]).strip())
+        creator = db.ws_members(t["workspace_id"]).get(t["created_by"]) or {}
+        to = creator.get("email") or (t["created_by"] if "@" in t["created_by"] else "")
+        if to and mailer.enabled():
+            ok, msg = mailer.send(to, f"[Tiket #{t['id']}] Balasan: {t['judul']}",
+                                  f"Tim Sales Akrual membalas tiket Anda \"{t['judul']}\":\n\n{' '.join(argv[2:]).strip()}\n\n"
+                                  f"Lihat tiket: {os.environ.get('SA_BASE_URL', '').rstrip('/')}/?tiket={t['id']}")
+            print("email ke", to, "terkirim" if ok else f"GAGAL: {msg}")
+        print(f"balasan tersimpan di tiket #{t['id']} (status: answered)")
+        return
+    if cmd == "tiket-status":
+        if len(argv) < 3:
+            sys.exit("pakai: python3 app.py tiket-status <id> open|answered|closed")
+        db.ticket_set_status(int(argv[1]), argv[2])
+        print("status diubah")
+        return
     if cmd == "mail-dns":
         print(f"mode email: {mailer.mode()}  pengirim: {mailer.from_addr() or '-'}  selector: {mailer.selector()}")
         for r in mailer.dns_records(os.environ.get("SA_SERVER_IP", "")):

@@ -105,6 +105,22 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
 .pill.info{background:var(--lav);color:var(--purple-dk)}
 #toast{position:fixed;bottom:18px;right:18px;background:var(--ink);color:#fff;padding:10px 14px;border-radius:8px;display:none;max-width:420px;z-index:9;font-size:13px}
 .tt{position:absolute;pointer-events:none;background:#fff;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;font-size:12px;box-shadow:var(--shadow);display:none;z-index:5}
+.tk-att{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.tk-att .it{position:relative;border:1px solid var(--line);border-radius:8px;padding:4px;background:#fff;font-size:11px;color:var(--ink2);max-width:150px}
+.tk-att .it img{display:block;max-width:140px;max-height:100px;border-radius:4px}
+.tk-att .it .x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;border:none;padding:0;font-size:12px;line-height:20px;cursor:pointer}
+.tk-att .it .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;display:block}
+textarea.tk{font:inherit;width:100%;min-height:110px;padding:8px 10px;border:1px solid var(--line2);border-radius:6px;resize:vertical}
+textarea.tk.over{background:var(--lav)}
+.tk-msg{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#fff}
+.tk-msg.sup{background:var(--bg2);border-color:var(--purple)}
+.tk-msg .hd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin-bottom:4px}
+.tk-msg .hd b{color:var(--ink)}
+.tk-msg .bd{white-space:pre-wrap;word-break:break-word}
+.tk-msg .fl{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.tk-msg .fl a{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:3px;background:#fff;font-size:11px;text-decoration:none;color:var(--ink2);max-width:260px}
+.tk-msg .fl a img{display:block;max-width:250px;max-height:180px;border-radius:4px}
+tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
 </style>
 </head>
 <body>
@@ -127,6 +143,7 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
     <button data-tab="audit">Audit</button>
     <div class="grp">Pengaturan</div>
     <button data-tab="data">Data &amp; file</button>
+    <button data-tab="tiket">Tiket &amp; masukan <span class="pill warn" id="tkBadge" style="display:none;margin-left:4px"></span></button>
     <button data-tab="ws" id="tabWs" style="display:none">Workspace</button>
   </nav>
   </aside>
@@ -309,6 +326,38 @@ details.f .d{color:var(--ink2);font-size:12px;margin:6px 0}
       <div class="row" style="margin-top:8px"><input type="text" id="nuName" placeholder="nama pengguna, mis. rina" style="min-width:160px"><input type="text" id="nuPass" placeholder="password awal (min 12)" style="min-width:200px"><select id="nuRole" style="min-width:110px"><option value="user">user</option><option value="admin">admin</option></select><button id="btnAddUser">+ Tambah pengguna</button></div></details>
     </div>
   </div>
+  <!-- TIKET -->
+  <div class="panel" id="p-tiket">
+    <div id="tkListView">
+      <div class="grid2">
+        <div class="card">
+          <h2>Kirim tiket baru</h2>
+          <div class="desc">Laporkan masalah, tanya, atau usulkan fitur. Screenshot bisa langsung <b>di-paste (Ctrl+V / ⌘V)</b> ke kolom isi, ditarik ke sini, atau dipilih dari file. Tim Sales Akrual membalas di tiket ini dan lewat email.</div>
+          <div class="row" style="margin-bottom:8px"><input type="text" id="tkJudul" placeholder="judul singkat, mis. angka refund Shopee tidak cocok" style="flex:1;min-width:220px"><select id="tkKat" style="min-width:140px"><option value="bug">Masalah / bug</option><option value="pertanyaan">Pertanyaan</option><option value="saran">Saran fitur</option><option value="lain">Lainnya</option></select><select id="tkToko" style="min-width:140px"><option value="">— tanpa toko —</option></select></div>
+          <textarea class="tk" id="tkIsi" placeholder="Ceritakan detailnya: apa yang dilakukan, apa yang muncul, apa yang diharapkan. Paste screenshot di sini."></textarea>
+          <div class="row" style="margin-top:8px"><label style="color:var(--purple);cursor:pointer;text-decoration:underline;font-size:13px">+ lampirkan gambar / PDF<input type="file" id="tkFile" multiple accept="image/*,application/pdf" style="display:none"></label><span class="small">maks. 5 file · 8 MB per file</span><button class="primary" id="btnTkKirim" style="margin-left:auto">Kirim tiket</button></div>
+          <div class="tk-att" id="tkAtt"></div>
+        </div>
+        <div class="card">
+          <h2>Tiket <span class="small" id="tkInfo"></span> <button class="ghost" id="btnTkReload" style="font-size:11px">muat ulang</button></h2>
+          <div class="desc">Klik tiket untuk membuka percakapan dan membalas. <span class="pill warn">terbuka</span> menunggu tim · <span class="pill info">dijawab</span> ada balasan untuk Anda · <span class="pill ok">selesai</span> ditutup.</div>
+          <div class="tblwrap" style="max-height:60vh"><table id="tblTk" class="filelist"></table></div>
+        </div>
+      </div>
+    </div>
+    <div id="tkDetailView" style="display:none">
+      <div class="card">
+        <div class="row" style="margin-bottom:6px"><button class="ghost" id="btnTkBack">← semua tiket</button><span class="small" id="tkDetMeta"></span><span id="tkDetActions" style="margin-left:auto"></span></div>
+        <h2 id="tkDetJudul"></h2>
+        <div id="tkThread"></div>
+        <div id="tkReplyBox" style="margin-top:12px">
+          <textarea class="tk" id="tkBalas" placeholder="Tulis balasan… (screenshot bisa di-paste di sini)" style="min-height:80px"></textarea>
+          <div class="row" style="margin-top:8px"><label style="color:var(--purple);cursor:pointer;text-decoration:underline;font-size:13px">+ lampirkan<input type="file" id="tkFile2" multiple accept="image/*,application/pdf" style="display:none"></label><button class="primary" id="btnTkBalas" style="margin-left:auto">Kirim balasan</button></div>
+          <div class="tk-att" id="tkAtt2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
   </div><!-- /main -->
 </div>
 <div id="toast"></div>
@@ -393,6 +442,7 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+b.dataset.tab));
   if(b.dataset.tab==='hpp') loadHpp();
   if(b.dataset.tab==='iklan') loadAds();
+  if(b.dataset.tab==='tiket' && !TK.cur) loadTiket();
   try{localStorage.setItem('sa_tab',b.dataset.tab)}catch(e){}
 });
 
@@ -793,8 +843,81 @@ $('#btnAdsAddMonth').onclick=()=>{ const m=prompt('Bulan (format YYYY-MM), mis. 
 $('#btnAdsAddChan').onclick=()=>{ const c=prompt('Nama channel iklan baru, mis. Iklan Google Ads'); if(!c) return; if(ADS.channels.includes(c)) return toast('sudah ada'); ADS.channels.push(c); ADS.attribution[c]='all'; renderAds(); $('#adsInfo').innerHTML='<span class="pill warn">belum disimpan</span>'; };
 $('#btnAdsSave').onclick=async()=>{ const t=$('#toko').value; if(!t) return toast('pilih toko'); ADS.notes=$('#adsNotes').value; ADS.prorate=$('#adsProrate').checked; try{ await api('/api/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toko:t,channels:ADS.channels,attribution:ADS.attribution,months:ADS.months,notes:ADS.notes,prorate:$('#adsProrate').checked})}); toast('iklan tersimpan — klik Hitung untuk update laporan'); loadAds(); }catch(e){ toast('gagal: '+e.message); } };
 
+// ---------- tiket & masukan
+const TK = {list:[], cur:null, att:{tkAtt:[], tkAtt2:[]}};
+const TK_STAT = {open:['terbuka','warn'], answered:['dijawab','info'], closed:['selesai','ok']};
+const TK_KAT = {bug:'Masalah / bug', pertanyaan:'Pertanyaan', saran:'Saran fitur', lain:'Lainnya'};
+const tkWhen = s => s ? new Date(s).toLocaleString('id-ID',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '–';
+function tkAddFiles(box, files){
+  const arr=TK.att[box];
+  for(const f of files){
+    if(!f) continue;
+    if(!/^image\//.test(f.type) && f.type!=='application/pdf'){ toast(f.name+': hanya gambar atau PDF'); continue; }
+    if(f.size>8*1024*1024){ toast(f.name+': lebih dari 8 MB'); continue; }
+    if(arr.length>=5){ toast('maksimal 5 lampiran per pesan'); break; }
+    arr.push(f);
+  }
+  tkRenderAtt(box);
+}
+function tkRenderAtt(box){
+  const el=$('#'+box); const arr=TK.att[box];
+  el.innerHTML=arr.map((f,i)=>`<div class="it">${/^image\//.test(f.type)?`<img src="${URL.createObjectURL(f)}" alt="">`:'📄'}<span class="nm" title="${esc(f.name)}">${esc(f.name)}</span><button class="x" title="hapus" onclick="tkDelAtt('${box}',${i})">×</button></div>`).join('');
+}
+function tkDelAtt(box,i){ TK.att[box].splice(i,1); tkRenderAtt(box); }
+function tkPaste(ta, box){
+  ta.addEventListener('paste', e=>{ const items=[...(e.clipboardData?.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()); if(items.length){ e.preventDefault(); items.forEach((f,i)=>{ if(f && !f.name.match(/\./)) f=new File([f],'screenshot-'+Date.now()+'-'+i+'.png',{type:f.type}); tkAddFiles(box,[f]); }); toast(items.length+' gambar dilampirkan'); } });
+  ta.addEventListener('dragover', e=>{ e.preventDefault(); ta.classList.add('over'); });
+  ta.addEventListener('dragleave', ()=>ta.classList.remove('over'));
+  ta.addEventListener('drop', e=>{ e.preventDefault(); ta.classList.remove('over'); tkAddFiles(box, [...e.dataTransfer.files]); });
+}
+tkPaste($('#tkIsi'),'tkAtt'); tkPaste($('#tkBalas'),'tkAtt2');
+$('#tkFile').onchange=e=>{ tkAddFiles('tkAtt',[...e.target.files]); e.target.value=''; };
+$('#tkFile2').onchange=e=>{ tkAddFiles('tkAtt2',[...e.target.files]); e.target.value=''; };
+async function tkUpload(url, fields, box){
+  const fd=new FormData(); for(const k in fields) fd.append(k, fields[k]); for(const f of TK.att[box]) fd.append('files', f, f.name);
+  const r=await fetch(url,{method:'POST',body:fd});
+  if(r.status===401){ location.href='/login'; throw new Error('sesi habis'); }
+  if(!r.ok){ let m=r.statusText; try{ m=(await r.json()).detail||m }catch(e){} throw new Error(m); }
+  TK.att[box]=[]; tkRenderAtt(box);
+  return r.json();
+}
+async function loadTiket(){
+  try{ TK.list=await api('/api/tiket'); }catch(e){ $('#tblTk').innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; return; }
+  const tb=$('#tblTk');
+  tb.innerHTML='<tr><th>#</th><th class="l">Judul</th>'+(ME.superadmin?'<th class="l">Workspace</th>':'')+'<th class="l">Status</th><th class="l">Terakhir</th></tr>'+
+    (TK.list.map(t=>`<tr class="tk-row" onclick="openTiket(${t.id})"><td>${t.id}</td><td class="l"><b>${esc(t.judul)}</b><div class="small">${esc(TK_KAT[t.kategori]||t.kategori)}${t.toko?' · '+esc(t.toko):''} · ${t.messages} pesan${t.files?' · '+t.files+' lampiran':''}</div></td>${ME.superadmin?`<td class="l">${esc(t.workspace)}<div class="small">${esc(t.created_by)}</div></td>`:''}<td class="l"><span class="pill ${TK_STAT[t.status][1]}">${TK_STAT[t.status][0]}</span></td><td class="l">${tkWhen(t.updated)}<div class="small">${t.last_support?'Tim Sales Akrual':esc(t.last_by)}</div></td></tr>`).join('')||'<tr><td class="muted" colspan="5">belum ada tiket</td></tr>');
+  $('#tkInfo').textContent=TK.list.length?`${TK.list.length} tiket · ${TK.list.filter(t=>t.status!=='closed').length} belum selesai`:'';
+  const n=TK.list.filter(t=>ME.superadmin?t.status==='open':t.status==='answered').length;
+  const b=$('#tkBadge'); b.textContent=n; b.style.display=n?'':'none';
+  const sel=$('#tkToko'); const prev=sel.value; sel.innerHTML='<option value="">— tanpa toko —</option>'+[...$('#toko').options].filter(o=>o.value).map(o=>`<option value="${esc(o.value)}">${esc(o.value)}</option>`).join(''); sel.value=prev||$('#toko').value||'';
+}
+async function openTiket(id){
+  let t; try{ t=await api('/api/tiket/'+id); }catch(e){ return toast('gagal: '+e.message); }
+  TK.cur=t;
+  $('#tkListView').style.display='none'; $('#tkDetailView').style.display='';
+  $('#tkDetJudul').innerHTML=`#${t.id} · ${esc(t.judul)} <span class="pill ${TK_STAT[t.status][1]}">${TK_STAT[t.status][0]}</span>`;
+  $('#tkDetMeta').textContent=`${TK_KAT[t.kategori]||t.kategori}${t.toko?' · toko '+t.toko:''}${ME.superadmin?' · workspace '+t.workspace:''} · dibuat ${tkWhen(t.created)} oleh ${t.created_by}`;
+  const act=[]; if(t.status!=='closed') act.push(`<button class="ghost" onclick="tkStatus('closed')">tandai selesai</button>`); else act.push(`<button class="ghost" onclick="tkStatus('open')">buka lagi</button>`);
+  if(ME.superadmin) act.push(`<button class="ghost" onclick="tkDel()">hapus tiket</button>`);
+  $('#tkDetActions').innerHTML=act.join(' ');
+  $('#tkThread').innerHTML=t.messages.map(m=>`<div class="tk-msg ${m.support?'sup':''}"><div class="hd"><b>${m.support?'Tim Sales Akrual':esc(m.author_name||m.author)}</b>${m.support?'<span class="pill info">support</span>':''}<span>${tkWhen(m.created)}</span></div><div class="bd">${esc(m.isi)}</div>${m.files.length?`<div class="fl">${m.files.map(f=>`<a href="/api/tiket/file/${f.id}" target="_blank" title="${esc(f.name)}">${/^image\//.test(f.mime)?`<img src="/api/tiket/file/${f.id}" alt="${esc(f.name)}" loading="lazy">`:'📄 '+esc(f.name)}</a>`).join('')}</div>`:''}</div>`).join('');
+  $('#tkBalas').value=''; TK.att.tkAtt2=[]; tkRenderAtt('tkAtt2');
+  history.replaceState(null,'','/?tiket='+t.id);
+}
+function tkBack(){ TK.cur=null; $('#tkDetailView').style.display='none'; $('#tkListView').style.display=''; history.replaceState(null,'','/'); loadTiket(); }
+$('#btnTkBack').onclick=tkBack; $('#btnTkReload').onclick=loadTiket;
+$('#btnTkKirim').onclick=async()=>{ const judul=$('#tkJudul').value.trim(); if(!judul) return toast('isi judul tiket'); const b=$('#btnTkKirim'); b.disabled=true; b.textContent='mengirim…';
+  try{ const r=await tkUpload('/api/tiket',{judul,isi:$('#tkIsi').value,kategori:$('#tkKat').value,toko:$('#tkToko').value},'tkAtt'); $('#tkJudul').value=''; $('#tkIsi').value=''; toast('tiket #'+r.id+' terkirim'); await loadTiket(); openTiket(r.id); }
+  catch(e){ toast('gagal: '+e.message); } finally{ b.disabled=false; b.textContent='Kirim tiket'; } };
+$('#btnTkBalas').onclick=async()=>{ if(!TK.cur) return; const isi=$('#tkBalas').value.trim(); if(!isi && !TK.att.tkAtt2.length) return toast('tulis balasan atau lampirkan file'); const b=$('#btnTkBalas'); b.disabled=true; b.textContent='mengirim…';
+  try{ await tkUpload('/api/tiket/'+TK.cur.id+'/balas',{isi},'tkAtt2'); toast('balasan terkirim'); openTiket(TK.cur.id); }catch(e){ toast('gagal: '+e.message); } finally{ b.disabled=false; b.textContent='Kirim balasan'; } };
+async function tkStatus(status){ if(!TK.cur) return; try{ await post('/api/tiket/'+TK.cur.id+'/status',{status}); toast(status==='closed'?'tiket ditandai selesai':'tiket dibuka lagi'); openTiket(TK.cur.id); }catch(e){ toast('gagal: '+e.message); } }
+async function tkDel(){ if(!TK.cur||!confirm('Hapus tiket #'+TK.cur.id+' beserta lampirannya?')) return; try{ await api('/api/tiket/'+TK.cur.id,{method:'DELETE'}); toast('tiket dihapus'); tkBack(); }catch(e){ toast('gagal: '+e.message); } }
+
 // init
-(async()=>{ await loadMe(); await loadToko(); try{ const t=localStorage.getItem('sa_tab'); if(t) document.querySelector(`.tabs button[data-tab="${t}"]`)?.click(); }catch(e){} })();
+(async()=>{ await loadMe(); await loadToko(); loadTiket(); const tk=new URLSearchParams(location.search).get('tiket');
+  if(tk){ document.querySelector('.tabs button[data-tab="tiket"]').click(); openTiket(+tk); return; }
+  try{ const t=localStorage.getItem('sa_tab'); if(t) document.querySelector(`.tabs button[data-tab="${t}"]`)?.click(); }catch(e){} })();
 </script>
 </body>
 </html>
