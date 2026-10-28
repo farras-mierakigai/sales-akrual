@@ -7,7 +7,11 @@ Mode lokal (SA_MODE=local, default di Mac) tidak butuh login: pemakai dianggap a
 Dua jalur masuk:
 - username + password (akun dibuat admin workspace)
 - Google (OIDC): sign-up mandiri. Email baru → workspace baru (dia admin-nya); email yang diundang → diarahkan ke
-  halaman /undangan untuk menerima dulu (akun yang sudah ada pun bisa menerima: akunnya pindah workspace). Env: SA_GOOGLE_CLIENT_ID, SA_GOOGLE_CLIENT_SECRET, SA_BASE_URL (mis. https://apps.mierakigai.com).
+  halaman /undangan untuk menerima dulu. Env: SA_GOOGLE_CLIENT_ID, SA_GOOGLE_CLIENT_SECRET, SA_BASE_URL (mis. https://apps.mierakigai.com).
+
+Satu akun bisa menjadi anggota BANYAK workspace (tabel ws_member, role per workspace). Menerima undangan = workspace
+ditambahkan ke akun (bukan pindah); workspace yang sedang aktif tersimpan di app_user.workspace_id dan bisa diganti lewat
+/api/workspace/switch.
 """
 import os
 import json
@@ -102,11 +106,11 @@ def add_user(name, password, role="user", workspace_id=None):
     ws = int(workspace_id or db.current_ws())
     with _lock:
         users = load_users()
-        if name in users and users[name]["workspace_id"] != ws:
+        if name in users:
             raise ValueError("nama pengguna sudah dipakai")
-        users[name] = dict(hash=_hash(password), role=role, created=int(time.time()), workspace_id=ws,
-                           email=name if "@" in name else "")
-        save_users(users)
+        db.user_upsert(name, dict(hash=_hash(password), role=role, created=int(time.time()), workspace_id=ws,
+                                  email=name if "@" in name else ""))
+        db.member_add(name, ws, role)
     return name
 
 
@@ -136,12 +140,17 @@ def set_password(name, password):
         save_users(users)
 
 
-def _same_ws(users, name, ws):
-    """Akun harus ada DAN berada di workspace yang sama dengan pemanggil."""
-    u = users.get(name)
-    if not u or u["workspace_id"] != ws:
+def _member_or_404(name, ws):
+    """Akun harus anggota workspace pemanggil."""
+    m = db.member_get(name, ws)
+    if not m:
         raise ValueError("pengguna tidak ada")
-    return u
+    return m
+
+
+def _admins_left(ws, without=None, changed=None):
+    members = db.ws_members(ws)
+    return any(v["role"] == "admin" for k, v in members.items() if k != without and k != changed)
 
 
 def set_role(name, role, workspace_id=None):
@@ -149,23 +158,32 @@ def set_role(name, role, workspace_id=None):
         raise ValueError("role harus admin atau user")
     ws = int(workspace_id or db.current_ws())
     with _lock:
-        users = load_users()
-        _same_ws(users, name, ws)
-        users[name]["role"] = role
-        if role != "admin" and not any(u["role"] == "admin" and u["workspace_id"] == ws for u in users.values()):
+        _member_or_404(name, ws)
+        if role != "admin" and not _admins_left(ws, changed=name):
             raise ValueError("harus tersisa minimal satu admin")
-        save_users(users)
+        db.member_add(name, ws, role)
+        u = load_users().get(name)
+        if u and int(u["workspace_id"]) == ws:          # workspace ini sedang aktif baginya → role aktif ikut berubah
+            db.user_upsert(name, u | dict(role=role))
 
 
 def remove_user(name, workspace_id=None):
+    """Keluarkan akun dari workspace. Akun yang tidak punya workspace lain dihapus sepenuhnya;
+    yang masih punya → workspace aktifnya dipindah ke salah satu workspace lainnya."""
     ws = int(workspace_id or db.current_ws())
     with _lock:
-        users = load_users()
-        _same_ws(users, name, ws)
-        rest = {k: v for k, v in users.items() if k != name}
-        if not any(u["role"] == "admin" and u["workspace_id"] == ws for u in rest.values()):
+        _member_or_404(name, ws)
+        if not _admins_left(ws, without=name):
             raise ValueError("harus tersisa minimal satu admin")
-        save_users(rest)
+        db.member_remove(name, ws)
+        others = db.user_workspaces(name)
+        if not others:
+            db.user_delete(name)
+            return "deleted"
+        u = load_users().get(name)
+        if u and int(u["workspace_id"]) == ws:
+            db.user_set_active(name, others[0]["id"])
+        return "removed"
 
 
 def list_users(workspace_id=None):
@@ -247,6 +265,7 @@ def google_login(profile, allow_create=True):
             return None, "new"
         db.user_upsert(email, dict(hash="", role=role, created=int(time.time()), workspace_id=ws, email=email,
                                    google_sub=sub, display_name=display, picture=picture))
+        db.member_add(email, ws, role)
         return make_token(email), status
 
 
@@ -283,6 +302,7 @@ def signup_complete(profile, form):
         ws = db.ws_create(business, email)
         db.user_upsert(email, dict(hash="", role="admin", created=int(time.time()), workspace_id=ws, email=email,
                                    google_sub=sub, display_name=name, picture=picture))
+        db.member_add(email, ws, "admin")
         db.customer_save(ws, name=name, email=email, phone=phone, business=business, city=city)
         return make_token(email), "created"
 
@@ -342,9 +362,19 @@ def _account_by_email(users, email):
     return next((k for k, v in users.items() if v.get("email") == email), None)
 
 
+def _owner_label(ws):
+    """Nama pemilik workspace untuk ditampilkan: nama tampilan akun pemilik, atau email/username-nya."""
+    owner = (ws or {}).get("owner") or ""
+    if not owner or owner not in load_users():        # workspace lama tanpa kolom owner → admin pertama
+        admins = [k for k, v in db.ws_members(ws["id"]).items() if v["role"] == "admin"] if ws else []
+        owner = admins[0] if admins else owner
+    u = load_users().get(owner) or {}
+    return (u.get("display_name") or owner), (u.get("email") or (owner if "@" in owner else ""))
+
+
 def invite_info(ws_id, email):
     """Undangan yang masih berlaku → dict untuk halaman /undangan, atau None. 'existing' = akun email ini yang sudah ada
-    (di workspace mana) supaya halaman bisa memberi tahu bahwa menerima = pindah workspace."""
+    (anggota workspace mana saja) supaya halaman bisa memberi tahu bahwa menerima = workspace ditambahkan ke akunnya."""
     inv, ws = db.invite_get(ws_id, email), db.ws_get(ws_id)
     if not inv or not ws:
         return None
@@ -352,23 +382,18 @@ def invite_info(ws_id, email):
     hit = _account_by_email(users, email)
     existing = None
     if hit:
-        u = users[hit]
-        cws = db.ws_get(u["workspace_id"]) or {}
-        same = int(u["workspace_id"]) == int(ws_id)
-        others = [k for k, v in users.items() if int(v.get("workspace_id", 0)) == int(u["workspace_id"]) and k != hit]
-        tokos = [] if same else db.ws_toko_names(u["workspace_id"])
-        # data toko boleh ikut pindah hanya kalau dia satu-satunya anggota workspace lama (tidak mengambil data tim lain)
-        existing = dict(name=hit, workspace_id=int(u["workspace_id"]), workspace=cws.get("name", ""), same=same,
-                        toko=tokos, others=len(others), can_bring=bool(tokos) and not others)
-    return dict(token=make_invite_token(ws_id, email), workspace_id=int(ws_id), workspace=ws["name"], email=email,
-                role=inv["role"], invited_by=inv["invited_by"], created=inv["created_at"].isoformat(), existing=existing)
+        wss = db.user_workspaces(hit)
+        existing = dict(name=hit, workspaces=[w["name"] for w in wss], workspace=(db.ws_get(users[hit]["workspace_id"]) or {}).get("name", ""),
+                        same=any(w["id"] == int(ws_id) for w in wss))
+    owner, owner_email = _owner_label(ws)
+    return dict(token=make_invite_token(ws_id, email), workspace_id=int(ws_id), workspace=ws["name"], owner=owner, owner_email=owner_email,
+                email=email, role=inv["role"], invited_by=inv["invited_by"], created=inv["created_at"].isoformat(), existing=existing)
 
 
-def invite_accept(ws_id, email, profile=None, bring_data=False):
+def invite_accept(ws_id, email, profile=None):
     """Terima undangan. profile = profil Google terverifikasi (dipakai kalau akun belum ada / untuk memperbarui foto & nama).
-    → (token sesi, status): 'joined' (akun baru dibuat di workspace itu), 'moved' (akun lama dipindah ke workspace itu),
-    'login' (sudah anggota workspace itu). bring_data=True: semua toko (+arsip) workspace lama ikut pindah — hanya
-    diizinkan kalau dia satu-satunya anggota workspace lama; workspace lama yang jadi kosong lalu dihapus."""
+    → (token sesi, status): 'joined' (akun baru dibuat di workspace itu), 'added' (workspace ditambahkan ke akun yang sudah ada,
+    workspace lamanya tetap), 'login' (sudah anggota workspace itu). Workspace yang diterima langsung jadi yang aktif."""
     if profile:
         sub, pemail, display, picture = _profile_fields(profile)
         if pemail != email:
@@ -383,23 +408,18 @@ def invite_accept(ws_id, email, profile=None, bring_data=False):
             u = users[hit]
             if profile:
                 u.update(google_sub=sub, display_name=display, picture=picture)
-            old_ws = int(u["workspace_id"])
-            status = "login" if old_ws == int(ws_id) else "moved"
-            if status == "moved" and bring_data:
-                if any(int(v.get("workspace_id", 0)) == old_ws and k != hit for k, v in users.items()):
-                    raise PermissionError("data toko tidak bisa dibawa: masih ada anggota lain di workspace lama")
-            u.update(workspace_id=int(ws_id), role=inv["role"])
+            status = "login" if db.member_get(hit, ws_id) else "added"
+            if status == "added":
+                db.member_add(hit, ws_id, inv["role"])
+            u.update(workspace_id=int(ws_id), role=db.member_get(hit, ws_id)["role"])
             db.user_upsert(hit, u)
             db.invite_remove(ws_id, email)
-            if status == "moved" and bring_data:
-                db.ws_move_toko(old_ws, ws_id)
-                if old_ws != db.DEFAULT_WS:
-                    db.ws_delete(old_ws)      # sudah kosong: tanpa toko, tanpa anggota
             return make_token(hit), status
         if not profile:
             raise PermissionError("masuk dengan Google dulu untuk menerima undangan")
         db.user_upsert(email, dict(hash="", role=inv["role"], created=int(time.time()), workspace_id=int(ws_id), email=email,
                                    google_sub=sub, display_name=display, picture=picture))
+        db.member_add(email, ws_id, inv["role"])
         db.invite_remove(ws_id, email)
         return make_token(email), "joined"
 

@@ -209,16 +209,7 @@ def auth_google_callback(request: Request, code: Optional[str] = None, state: Op
             inv = auth.read_invite_token(t)
             if not inv:
                 return fail("tautan undangan kedaluwarsa — minta admin mengirim ulang", "/undangan")
-            info = auth.invite_info(inv["workspace_id"], inv["email"])
-            if info and info["existing"] and not info["existing"]["same"]:
-                # akun sudah ada di workspace lain → masuk dulu, lalu kembali ke halaman undangan supaya bisa memilih
-                # apakah data tokonya ikut dibawa (jangan langsung dipindah tanpa tanya)
-                tok, status = auth.google_login(profile, allow_create=False)
-                if status != "login":
-                    return fail("akun untuk email ini tidak ditemukan")
-                resp = RedirectResponse(f"/undangan?t={quote(t)}", status_code=303)
-                resp.delete_cookie(OAUTH_COOKIE, path="/auth/")
-                return _set_session(resp, request, tok)
+            # akun baru dibuat di workspace pengundang; akun yang sudah ada → workspace pengundang ditambahkan (workspace lamanya tetap)
             tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], profile)
         else:
             tok, status = auth.google_login(profile, allow_create=False)
@@ -369,7 +360,47 @@ def api_me(request: Request):
                              invites=[dict(token=i["token"], workspace=i["workspace"], role=i["role"], invited_by=i["invited_by"])
                                       for i in (auth.invite_info(r["workspace_id"], u["email"]) for r in db.invites_for_email(u["email"]))
                                       if i and not (i["existing"] or {}).get("same")] if u.get("email") else [],
+                             workspaces=[] if auth.is_local() else [dict(id=w["id"], name=w["name"], role=w["role"], active=w["id"] == ws["id"])
+                                                                    for w in db.user_workspaces(u["name"])],
                              workspace=dict(id=ws["id"], name=ws["name"])), headers=NO_STORE)
+
+
+class WsSwitchIn(BaseModel):
+    id: int
+
+
+@app.post("/api/workspace/switch")
+def api_workspace_switch(body: WsSwitchIn, request: Request):
+    """Ganti workspace aktif (harus anggota). Sesi/cookie tetap; permintaan berikutnya memakai workspace itu."""
+    u = current_user(request)
+    if auth.is_local():
+        raise HTTPException(400, "mode lokal hanya punya satu workspace")
+    ws = db.ws_get(body.id)
+    if not ws or ws.get("status") == "suspended":
+        raise HTTPException(400, "workspace tidak ada atau dinonaktifkan")
+    try:
+        role = db.user_set_active(u["name"], body.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return JSONResponse(dict(ok=True, workspace=dict(id=ws["id"], name=ws["name"]), role=role), headers=NO_STORE)
+
+
+@app.post("/api/workspace/keluar")
+def api_workspace_leave(request: Request):
+    """Keluar dari workspace yang sedang aktif. Harus masih punya workspace lain, dan bukan admin terakhir di sini."""
+    u = current_user(request)
+    if auth.is_local():
+        raise HTTPException(400, "mode lokal")
+    others = [w for w in db.user_workspaces(u["name"]) if w["id"] != int(u["workspace_id"])]
+    if not others:
+        raise HTTPException(400, "ini satu-satunya workspace Anda — tidak bisa keluar")
+    try:
+        auth.remove_user(u["name"], u["workspace_id"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    me = db.users_load().get(u["name"]) or {}
+    ws = db.ws_get(me.get("workspace_id")) or {}
+    return JSONResponse(dict(ok=True, workspace=dict(id=ws.get("id"), name=ws.get("name", ""))), headers=NO_STORE)
 
 
 class WsIn(BaseModel):
@@ -488,7 +519,6 @@ def api_invite_view(request: Request, t: Optional[str] = None):
 
 class InviteTokenIn(BaseModel):
     t: str
-    bawa_data: bool = False      # terima + bawa semua toko workspace lama (hanya kalau dia satu-satunya anggota)
 
 
 @app.post("/api/undangan/terima")
@@ -501,16 +531,12 @@ def api_invite_accept(body: InviteTokenIn, request: Request):
         raise HTTPException(401, "masuk dengan Google dulu untuk menerima undangan")
     if viewer["email"] != inv["email"]:
         raise HTTPException(403, f"undangan ini untuk {inv['email']}, Anda masuk sebagai {viewer['email'] or viewer['name']}")
-    before = db.ws_toko_names(inv["workspace_id"])
     try:
-        tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], viewer.get("profile"), bring_data=body.bawa_data)
+        tok, status = auth.invite_accept(inv["workspace_id"], inv["email"], viewer.get("profile"))
     except (PermissionError, ValueError) as e:
         raise HTTPException(400, str(e))
     ws = db.ws_get(inv["workspace_id"]) or {}
-    moved = [n for n in db.ws_toko_names(inv["workspace_id"]) if n not in before] if body.bawa_data else []
-    with _lock:
-        _cache.clear()          # toko pindah workspace → cache hasil hitung per (workspace, toko) tidak berlaku lagi
-    resp = JSONResponse(dict(ok=True, status=status, workspace=ws.get("name", ""), toko=moved), headers=NO_STORE)
+    resp = JSONResponse(dict(ok=True, status=status, workspace=ws.get("name", "")), headers=NO_STORE)
     resp.delete_cookie(auth.SIGNUP_COOKIE, path="/")
     return _set_session(resp, request, tok)
 
@@ -587,12 +613,12 @@ def api_users_delete(name: str, request: Request):
     me = require_admin(request)
     name = auth.norm_name(name)
     if name == me["name"]:
-        raise HTTPException(400, "tidak bisa menghapus akun sendiri")
+        raise HTTPException(400, "tidak bisa mengeluarkan akun sendiri — pakai 'keluar dari workspace'")
     try:
-        auth.remove_user(name)
+        status = auth.remove_user(name)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return dict(ok=True)
+    return dict(ok=True, status=status)
 
 
 @app.get("/healthz")

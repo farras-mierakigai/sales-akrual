@@ -127,7 +127,7 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
 <header>
   <div class="logo">MKG</div>
   <div><h1>Sales Akrual</h1><div class="sub">Penjualan riil per bulan order — sudah dipotong batal, refund & biaya marketplace. Shopee · TikTok · Tokopedia</div></div>
-  <div id="userbox" class="row" style="margin-left:auto;display:none;gap:8px"><img id="mePic" alt="" style="display:none;width:26px;height:26px;border-radius:50%"><span class="small"><b id="meWs"></b> · <b id="meName"></b> <span class="pill" id="meRole"></span></span><button class="ghost" id="btnMyPw" title="atur password untuk masuk tanpa Google">password</button><button class="ghost" id="btnLogout">keluar</button></div>
+  <div id="userbox" class="row" style="margin-left:auto;display:none;gap:8px"><img id="mePic" alt="" style="display:none;width:26px;height:26px;border-radius:50%"><span class="small" id="wsBox"><b id="meWs"></b></span><span class="small">· <b id="meName"></b> <span class="pill" id="meRole"></span></span><button class="ghost" id="btnMyPw" title="atur password untuk masuk tanpa Google">password</button><button class="ghost" id="btnLogout">keluar</button></div>
 </header>
 
 <div class="wrap">
@@ -317,9 +317,9 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
     </div>
     <div class="card" id="usersCard" style="display:none">
       <h2>Anggota workspace <span id="wsName"></span> <button class="ghost" id="btnWsRename" style="font-size:11px">ganti nama</button></h2>
-      <div class="desc">Hanya admin yang lihat bagian ini. Semua anggota bisa buat toko, upload file, hitung, dan unduh laporan; <b>hapus toko</b> dan kelola anggota hanya admin. Data workspace ini tidak terlihat oleh workspace lain.</div>
+      <div class="desc">Hanya admin yang lihat bagian ini. Semua anggota bisa buat toko, upload file, hitung, dan unduh laporan; <b>hapus toko</b> dan kelola anggota hanya admin. Data workspace ini tidak terlihat oleh workspace lain. Satu akun bisa menjadi anggota beberapa workspace dan berpindah lewat menu di kanan atas.</div>
       <div class="row"><input type="email" id="invEmail" placeholder="email Google anggota tim, mis. rina@gmail.com" style="min-width:280px"><select id="invRole" style="min-width:110px"><option value="user">user</option><option value="admin">admin</option></select><button class="primary" id="btnInvite">+ Undang lewat email</button></div>
-      <div class="desc" style="margin-top:4px" id="invHelp">Yang diundang menerima email berisi tautan <i>Terima undangan</i>, lalu masuk dengan Google memakai email itu. Yang sudah punya akun di workspace lain juga bisa menerima — akunnya pindah ke workspace ini.</div>
+      <div class="desc" style="margin-top:4px" id="invHelp">Yang diundang menerima email berisi tautan <i>Terima undangan</i>, lalu masuk dengan Google memakai email itu. Yang sudah punya akun di workspace lain juga bisa menerima — workspace ini ditambahkan ke akunnya (workspace lamanya tetap).</div>
       <div class="small" id="invResult" style="display:none;margin-top:4px"></div>
       <div class="tblwrap" style="max-height:300px;margin-top:10px"><table id="tblUsers" class="filelist"></table></div>
       <details style="margin-top:10px"><summary class="small" style="cursor:pointer">Tambah akun dengan password (tanpa Google)</summary>
@@ -383,10 +383,18 @@ async function loadMe(){
   invBanner();
   $('#scanCard').style.display = ME.local ? '' : 'none';
   $('#btnDelToko').style.display = ME.role==='admin' ? '' : 'none';
-  if(!ME.local){ $('#userbox').style.display='flex'; $('#meName').textContent=ME.display_name||ME.user; $('#meRole').textContent=ME.role; $('#meWs').textContent=(ME.workspace&&ME.workspace.name)||''; if(ME.picture){ const im=$('#mePic'); im.src=ME.picture; im.style.display=''; } }
+  if(!ME.local){ $('#userbox').style.display='flex'; $('#meName').textContent=ME.display_name||ME.user; $('#meRole').textContent=ME.role; renderWsBox(); if(ME.picture){ const im=$('#mePic'); im.src=ME.picture; im.style.display=''; } }
   if(!ME.local && ME.role==='admin'){ $('#usersCard').style.display=''; $('#wsName').textContent=(ME.workspace&&ME.workspace.name)||''; loadUsers(); }
   if(!ME.local && ME.superadmin){ $('#tabWs').style.display=''; loadWs(); }
   if(new URLSearchParams(location.search).get('welcome')){ history.replaceState(null,'','/'); toast('Selamat datang! Workspace kamu sudah dibuat — mulai dengan membuat toko di tab Data & file.', 7000); }
+}
+// ---------- workspace aktif: satu akun bisa anggota beberapa workspace → pilih dari header
+function renderWsBox(){
+  const box=$('#wsBox'); const list=ME.workspaces||[]; const cur=(ME.workspace&&ME.workspace.name)||'';
+  if(list.length<2){ box.innerHTML=`<b>${esc(cur)}</b>`; return; }
+  box.innerHTML=`<select id="wsSwitch" title="pindah workspace" style="min-width:140px;padding:4px 8px;font-size:12px;font-weight:700">${list.map(w=>`<option value="${w.id}" ${w.active?'selected':''}>${esc(w.name)} (${w.role})</option>`).join('')}</select> <button class="ghost" id="btnWsLeave" title="keluar dari workspace yang sedang aktif" style="font-size:11px;padding:4px 8px">keluar</button>`;
+  $('#wsSwitch').onchange=async e=>{ try{ const r=await post('/api/workspace/switch',{id:+e.target.value}); toast('pindah ke workspace '+r.workspace.name); try{localStorage.removeItem('sa_toko')}catch(_){} location.reload(); }catch(err){ toast('gagal: '+err.message); renderWsBox(); } };
+  $('#btnWsLeave').onclick=async()=>{ if(!confirm('Keluar dari workspace "'+cur+'"? Anda tidak lagi melihat toko dan datanya (data tetap ada untuk anggota lain).')) return; try{ const r=await post('/api/workspace/keluar',{}); toast('keluar dari '+cur+' — sekarang di '+r.workspace.name); try{localStorage.removeItem('sa_toko')}catch(_){} location.reload(); }catch(err){ toast('gagal: '+err.message); } };
 }
 // ---------- superadmin: semua workspace
 let WS_ALL = [];
@@ -408,7 +416,7 @@ const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'
 async function loadUsers(){
   const tb=$('#tblUsers');
   try{ const [list, inv]=await Promise.all([api('/api/users'), api('/api/invites')]);
-    const rows=list.map(u=>`<tr><td class="l">${u.picture?`<img src="${esc(u.picture)}" alt="" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">`:''}<b>${esc(u.display_name||u.name)}</b>${u.email&&u.email!==u.display_name?` <span class="muted small">${esc(u.email)}</span>`:''}${u.name===ME.user?' <span class="muted small">(saya)</span>':''}</td><td class="l"><span class="pill ${u.role==='admin'?'':'info'}">${u.role}</span> ${u.google?'<span class="muted small">Google</span>':'<span class="muted small">password</span>'}</td><td class="l">${u.created?new Date(u.created*1000).toLocaleDateString('id-ID'):'–'}</td><td>${u.google?'':`<button class="ghost" onclick="userPw(${JSON.stringify(u.name)})">reset password</button> `}<button class="ghost" onclick="userRole(${JSON.stringify(u.name)},'${u.role==='admin'?'user':'admin'}')">jadikan ${u.role==='admin'?'user':'admin'}</button> ${u.name===ME.user?'':`<button class="ghost" onclick="userDel(${JSON.stringify(u.name)})">hapus</button>`}</td></tr>`);
+    const rows=list.map(u=>`<tr><td class="l">${u.picture?`<img src="${esc(u.picture)}" alt="" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">`:''}<b>${esc(u.display_name||u.name)}</b>${u.email&&u.email!==u.display_name?` <span class="muted small">${esc(u.email)}</span>`:''}${u.name===ME.user?' <span class="muted small">(saya)</span>':''}</td><td class="l"><span class="pill ${u.role==='admin'?'':'info'}">${u.role}</span> ${u.google?'<span class="muted small">Google</span>':'<span class="muted small">password</span>'}</td><td class="l">${u.created?new Date(u.created*1000).toLocaleDateString('id-ID'):'–'}</td><td>${u.google?'':`<button class="ghost" onclick="userPw(${JSON.stringify(u.name)})">reset password</button> `}<button class="ghost" onclick="userRole(${JSON.stringify(u.name)},'${u.role==='admin'?'user':'admin'}')">jadikan ${u.role==='admin'?'user':'admin'}</button> ${u.name===ME.user?'':`<button class="ghost" onclick="userDel(${JSON.stringify(u.name)})">keluarkan</button>`}</td></tr>`);
     const pend=inv.map(i=>`<tr><td class="l"><b>${esc(i.email)}</b> <span class="muted small">diundang, belum menerima</span></td><td class="l"><span class="pill info">${i.role}</span></td><td class="l">${new Date(i.created).toLocaleDateString('id-ID')}</td><td><button class="ghost" onclick="invResend(${JSON.stringify(i.email)})">${ME.mail?'kirim ulang email':'salin tautan'}</button> <button class="ghost" onclick="invDel(${JSON.stringify(i.email)})">batalkan undangan</button></td></tr>`);
     tb.innerHTML='<tr><th class="l">Anggota</th><th class="l">Role · masuk via</th><th class="l">Sejak</th><th></th></tr>'+rows.join('')+pend.join('');
   }catch(e){ tb.innerHTML='<tr><td class="neg">'+e.message+'</td></tr>'; }
@@ -417,7 +425,7 @@ function invBanner(){
   const b=$('#invBanner'); const list=ME.invites||[];
   if(!list.length){ b.style.display='none'; return; }
   b.style.display='block';
-  b.innerHTML=list.map(i=>`📩 <b>${esc(i.invited_by)}</b> mengundang Anda ke workspace <b>${esc(i.workspace)}</b> sebagai ${esc(i.role)}. Menerima = akun Anda pindah ke workspace itu (data workspace ini tidak ikut). <a href="/undangan?t=${encodeURIComponent(i.token)}" style="font-weight:700">Lihat &amp; terima</a> · <a href="#" onclick="invDecline(${JSON.stringify(i.token)});return false">tolak</a>`).join('<br>');
+  b.innerHTML=list.map(i=>`📩 <b>${esc(i.invited_by)}</b> mengundang Anda ke workspace <b>${esc(i.workspace)}</b> sebagai ${esc(i.role)}. Menerima = workspace itu ditambahkan ke akun Anda (workspace ini tetap; berpindah lewat menu di kanan atas). <a href="/undangan?t=${encodeURIComponent(i.token)}" style="font-weight:700">Lihat &amp; terima</a> · <a href="#" onclick="invDecline(${JSON.stringify(i.token)});return false">tolak</a>`).join('<br>');
 }
 async function invDecline(t){ if(!confirm('Tolak undangan ini?')) return; try{ await post('/api/undangan/tolak',{t}); ME.invites=(ME.invites||[]).filter(i=>i.token!==t); invBanner(); toast('undangan ditolak'); }catch(e){ toast('gagal: '+e.message); } }
 function invShow(r){
@@ -432,7 +440,7 @@ $('#btnWsRename').onclick=async()=>{ const name=prompt('Nama workspace / perusah
 $('#btnAddUser').onclick=async()=>{ const name=$('#nuName').value.trim(), password=$('#nuPass').value, role=$('#nuRole').value; if(!name||!password) return toast('isi nama & password'); try{ const r=await post('/api/users',{name,password,role}); toast('pengguna dibuat: '+r.name); $('#nuName').value=''; $('#nuPass').value=''; loadUsers(); }catch(e){ toast('gagal: '+e.message); } };
 async function userPw(name){ const password=prompt('Password baru untuk '+name+' (min 12 karakter):'); if(!password) return; try{ await post('/api/users/password',{name,password}); toast('password '+name+' diganti'); }catch(e){ toast('gagal: '+e.message); } }
 async function userRole(name,role){ if(!confirm('Ubah '+name+' jadi '+role+'?')) return; try{ await post('/api/users/role',{name,role}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
-async function userDel(name){ if(!confirm('Hapus pengguna '+name+'? Sesi login-nya langsung mati.')) return; try{ await api('/api/users?name='+encodeURIComponent(name),{method:'DELETE'}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
+async function userDel(name){ if(!confirm('Keluarkan '+name+' dari workspace ini? Akunnya tetap ada kalau ia anggota workspace lain; kalau tidak, akunnya dihapus.')) return; try{ await api('/api/users?name='+encodeURIComponent(name),{method:'DELETE'}); loadUsers(); }catch(e){ toast('gagal: '+e.message); } }
 $('#btnMyPw').onclick=async()=>{ const password=prompt('Password baru untuk akun '+ME.user+' (min 12 karakter):'); if(!password) return; try{ await post('/api/users/password',{name:ME.user,password}); toast('password diganti — masuk lagi dengan password baru'); setTimeout(()=>location.href='/login',1200); }catch(e){ toast('gagal: '+e.message); } };
 $('#btnLogout').onclick=async()=>{ try{ await post('/api/logout',{}); }catch(e){} location.href='/login'; };
 

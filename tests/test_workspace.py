@@ -237,6 +237,7 @@ def test_schema_migration_from_old_database():
         assert db.list_toko() == ["Lama"]
         users = db.users_load()
         assert users["farras"]["workspace_id"] == 1 and users["farras"]["email"] == ""
+        assert [(w["id"], w["role"]) for w in db.user_workspaces("farras")] == [(1, "admin")]   # ws_member diisi dari akun lama
         assert db.ws_get(1)["name"] == "Mierakigai" and db.ws_get(1)["owner"] == "farras"
         ws2 = db.ws_create("Lain", "x@y.z")
         db.set_ws(ws2)
@@ -283,64 +284,66 @@ def test_z_invite_token_and_email_checks():
     assert "cici@gmail.com" not in [i["email"] for i in c1.get("/api/invites").json()]
 
 
-def test_z_existing_account_accepts_invite_and_moves_workspace():
-    """Kasus nyata: Miftah sudah punya workspace sendiri (sign-up), lalu diundang ke workspace Mierakigai → menerima = akunnya pindah."""
+def test_z_existing_account_accepts_invite_and_gains_workspace():
+    """Kasus nyata: Miftah sudah punya workspace sendiri (sign-up), lalu diundang ke workspace Mierakigai → menerima = workspace
+    Mierakigai DITAMBAHKAN ke akunnya (workspace lamanya tetap), lalu ia bisa berpindah-pindah."""
     cm = client()
     assert login_google(cm, "sub-miftah", "miftah@mierakigai.com", "Miftah") == "created"
     old_ws = cm.get("/api/me").json()["workspace"]["id"]
     assert old_ws != 1
+    assert cm.post("/api/toko", json=dict(name="Gudang")).status_code == 200
     c1 = login_pw(client(), "farras", "rahasia-tim-2026")
     ws1 = c1.get("/api/me").json()["workspace"]["name"]      # sudah diganti jadi "PT Mierakigai" oleh tes sebelumnya
-    link = c1.post("/api/invites", json=dict(email="miftah@mierakigai.com", role="user")).json()["link"]
-    t = invite_token(link)
-    # banner di dashboard: /api/me akun Miftah memuat undangan + halaman undangan tahu akunnya ada di workspace lain
+    t = invite_token(c1.post("/api/invites", json=dict(email="miftah@mierakigai.com", role="user")).json()["link"])
+    # banner di dashboard + halaman undangan: pemilik workspace tampil, akun Miftah diketahui sudah anggota workspace "Miftah"
     me = cm.get("/api/me").json()
     assert [i["workspace"] for i in me["invites"]] == [ws1] and me["invites"][0]["token"]
-    v = cm.get("/api/undangan", params=dict(t=t)).json()
-    assert v["me"]["kind"] == "session" and v["invites"][0]["existing"]["workspace"] == "Miftah" and v["invites"][0]["existing"]["same"] is False
-    # login Google lagi dengan undangan menggantung → tetap login biasa (akun sudah ada), tidak dibelokkan
+    assert [w["name"] for w in me["workspaces"]] == ["Miftah"] and me["workspaces"][0]["active"] is True
+    inv = cm.get("/api/undangan", params=dict(t=t)).json()["invites"][0]
+    assert inv["owner"] == "farras" and inv["existing"]["workspaces"] == ["Miftah"] and inv["existing"]["same"] is False
     assert login_google(client(), "sub-miftah", "miftah@mierakigai.com") == "login"
-    # Miftah sudah upload di workspace-nya sendiri: toko "Eltahj" (bentrok nama dengan milik Mierakigai) dan "Gudang"
-    assert cm.post("/api/toko", json=dict(name="Eltahj")).status_code == 200
-    assert cm.post("/api/toko", json=dict(name="Gudang")).status_code == 200
-    db.set_ws(old_ws)
-    arsip = db.archive_dir("Eltahj")
-    os.makedirs(arsip, exist_ok=True)
-    open(os.path.join(arsip, "Order.all.test.xlsx"), "wb").write(b"x")
-    with db.engine().begin() as cx:
-        tid_old = db.toko_id(cx, "Gudang")
-    db.set_ws(1)
-    v = cm.get("/api/undangan", params=dict(t=t)).json()["invites"][0]["existing"]
-    assert v["toko"] == ["Eltahj", "Gudang"] and v["can_bring"] is True and v["others"] == 0
-    # terima + bawa data → akun pindah ke workspace 1 sebagai user, kedua toko ikut (Eltahj diberi akhiran " - Miftah" karena bentrok),
-    # arsip file ikut pindah, workspace lamanya yang kosong dihapus
-    r = cm.post("/api/undangan/terima", json=dict(t=t, bawa_data=True))
-    assert r.status_code == 200 and r.json()["status"] == "moved" and r.json()["workspace"] == ws1, r.text
-    assert r.json()["toko"] == ["Eltahj - Miftah", "Gudang"]
+    # terima → status 'added': workspace 1 ditambahkan dan jadi aktif (role user), workspace lama tetap ada dengan tokonya
+    r = cm.post("/api/undangan/terima", json=dict(t=t))
+    assert r.status_code == 200 and r.json()["status"] == "added" and r.json()["workspace"] == ws1, r.text
     me = cm.get("/api/me").json()
     assert me["workspace"]["id"] == 1 and me["role"] == "user" and me["invites"] == []
-    names = [x["name"] for x in cm.get("/api/toko").json()]
-    assert "Eltahj" in names and "Eltahj - Miftah" in names and "Gudang" in names
-    assert os.path.isfile(os.path.join(TMP, "Eltahj - Miftah", "Order.all.test.xlsx")) and not os.path.exists(arsip)
-    with db.engine().begin() as cx:
-        assert db.toko_id(cx, "Gudang") == tid_old            # baris data (toko_id) tidak berubah, hanya pindah workspace
-    assert db.ws_get(old_ws) is None
+    assert sorted(w["name"] for w in me["workspaces"]) == sorted([ws1, "Miftah"])
+    assert [x["name"] for x in cm.get("/api/toko").json()] == ["Eltahj"]
+    assert db.ws_get(old_ws) is not None and db.ws_toko_names(old_ws) == ["Gudang"]
     assert "miftah@mierakigai.com" in [u["name"] for u in c1.get("/api/users").json()]
-    # workspace lama yang masih punya anggota lain: data tidak boleh dibawa
+    # pindah balik ke workspace sendiri → role admin, toko sendiri; pindah ke workspace orang lain ditolak
+    assert cm.post("/api/workspace/switch", json=dict(id=old_ws)).status_code == 200
+    me = cm.get("/api/me").json()
+    assert me["workspace"]["id"] == old_ws and me["role"] == "admin"
+    assert [x["name"] for x in cm.get("/api/toko").json()] == ["Gudang"]
     cd = client(); assert login_google(cd, "sub-dewi", "dewi@gmail.com", "Dewi") == "created"
     dws = cd.get("/api/me").json()["workspace"]["id"]
-    assert cd.post("/api/invites", json=dict(email="eko@gmail.com")).status_code == 200
-    auth.invite_accept(dws, "eko@gmail.com", profile("sub-eko", "eko@gmail.com"))          # Eko jadi anggota kedua
-    assert cd.post("/api/toko", json=dict(name="TokoDewi")).status_code == 200
-    t3 = invite_token(c1.post("/api/invites", json=dict(email="dewi@gmail.com")).json()["link"])
-    ex = cd.get("/api/undangan", params=dict(t=t3)).json()["invites"][0]["existing"]
-    assert ex["can_bring"] is False and ex["others"] == 1 and ex["toko"] == ["TokoDewi"]
-    assert cd.post("/api/undangan/terima", json=dict(t=t3, bawa_data=True)).status_code == 400
-    assert cd.post("/api/undangan/terima", json=dict(t=t3)).json()["status"] == "moved"
-    assert db.ws_toko_names(dws) == ["TokoDewi"] and db.ws_get(dws) is not None
-    # undangan ke email yang sudah anggota ditolak; terima ulang tautan lama → error (undangan sudah terpakai)
-    assert c1.post("/api/invites", json=dict(email="miftah@mierakigai.com")).status_code == 400
-    assert cm.post("/api/undangan/terima", json=dict(t=t)).status_code == 400
+    assert cm.post("/api/workspace/switch", json=dict(id=dws)).status_code == 400
+    # menerima undangan ke workspace yang sudah diikuti → 'login' (tidak dobel)
+    t_again = invite_token(c1.post("/api/invites", json=dict(email="dewi@gmail.com")).json()["link"])
+    assert cd.post("/api/undangan/terima", json=dict(t=t_again)).json()["status"] == "added"
+    assert len(cd.get("/api/me").json()["workspaces"]) == 2
+    # admin workspace 1 mengeluarkan Miftah → akunnya tetap, aktif otomatis ke workspace Miftah
+    assert cm.post("/api/workspace/switch", json=dict(id=1)).status_code == 200
+    r = c1.delete("/api/users?name=miftah@mierakigai.com")
+    assert r.status_code == 200 and r.json()["status"] == "removed"
+    me = cm.get("/api/me").json()
+    assert me["workspace"]["id"] == old_ws and [w["id"] for w in me["workspaces"]] == [old_ws]
+    # keluar sendiri: satu-satunya workspace → ditolak; setelah diundang lagi, keluar dari workspace 1 boleh
+    assert cm.post("/api/workspace/keluar", json={}).status_code == 400
+    t2 = invite_token(c1.post("/api/invites", json=dict(email="miftah@mierakigai.com")).json()["link"])
+    assert cm.post("/api/undangan/terima", json=dict(t=t2)).json()["status"] == "added"
+    assert cm.get("/api/me").json()["workspace"]["id"] == 1
+    r = cm.post("/api/workspace/keluar", json={})
+    assert r.status_code == 200 and r.json()["workspace"]["id"] == old_ws
+    assert len(cm.get("/api/me").json()["workspaces"]) == 1
+    assert "miftah@mierakigai.com" not in [u["name"] for u in c1.get("/api/users").json()]
+    # Dewi keluar dari workspace 1 (bukan admin di sana) boleh; admin terakhir workspace Dewi (dirinya) tidak bisa keluar dari sana
+    assert cd.post("/api/workspace/switch", json=dict(id=1)).status_code == 200
+    assert cd.post("/api/workspace/keluar", json={}).status_code == 200
+    # superadmin menghapus workspace Dewi: Dewi hanya anggota di sana → akunnya ikut terhapus
+    assert c1.delete(f"/api/admin/workspace?id={dws}").status_code == 200
+    assert "dewi@gmail.com" not in db.users_load()
 
 
 def test_z_password_policy_and_account_lockout():

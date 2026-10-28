@@ -112,6 +112,17 @@ ticket_file = Table(
     Column("created_at", DateTime, nullable=False),
 )
 
+# keanggotaan: satu akun bisa menjadi anggota banyak workspace (role per workspace).
+# app_user.workspace_id / app_user.role = workspace yang sedang AKTIF (disalin dari baris ws_member saat berpindah).
+# Tanpa FK ke app_user.name karena users_save() menulis ulang tabel app_user; dibersihkan manual di user_delete().
+ws_member = Table(
+    "ws_member", meta,
+    Column("user_name", String(254), primary_key=True),
+    Column("workspace_id", Integer, ForeignKey("workspace.id", ondelete="CASCADE"), primary_key=True),
+    Column("role", String(16), nullable=False, default="user"),
+    Column("joined_at", Integer, nullable=False, default=0),      # epoch
+)
+
 toko = Table(
     "toko", meta,
     Column("id", Integer, primary_key=True),
@@ -284,6 +295,13 @@ def _migrate_schema(eng):
             owner = cx.execute(select(app_user.c.name).where(app_user.c.role == "admin").order_by(app_user.c.created)).scalar() or ""
             cx.execute(insert(workspace).values(id=DEFAULT_WS, name=os.environ.get("SA_WS_NAME", "Mierakigai"), owner=owner,
                                                 created_at=dt.datetime.now()))
+        # keanggotaan (versi multi-workspace): setiap akun lama = anggota workspace aktifnya
+        have = {(r[0], r[1]) for r in cx.execute(select(ws_member.c.user_name, ws_member.c.workspace_id))}
+        rows = [dict(user_name=r["name"], workspace_id=int(r["workspace_id"] or DEFAULT_WS), role=r["role"] or "user",
+                     joined_at=int(r["created"] or 0))
+                for r in cx.execute(select(app_user)).mappings() if (r["name"], int(r["workspace_id"] or DEFAULT_WS)) not in have]
+        if rows:
+            cx.execute(insert(ws_member), rows)
         if pg:
             run(cx, "SELECT setval(pg_get_serial_sequence('workspace','id'), GREATEST((SELECT MAX(id) FROM workspace), 1))")
             # FK workspace_id → workspace (database lama dibuat sebelum FK ini ada di definisi tabel). SQLite tidak bisa
@@ -659,9 +677,64 @@ def users_save(users):
 
 def user_upsert(name, v):
     """Simpan satu akun tanpa menyentuh akun lain (aman untuk sign-up paralel)."""
+    vals = _user_values(name, v)
     with engine().begin() as cx:
+        if cx.execute(update(app_user).where(app_user.c.name == name).values(**{k: x for k, x in vals.items() if k != "name"})).rowcount == 0:
+            cx.execute(insert(app_user).values(**vals))
+
+
+def user_delete(name):
+    """Hapus akun beserta semua keanggotaannya."""
+    with engine().begin() as cx:
+        cx.execute(delete(ws_member).where(ws_member.c.user_name == name))
         cx.execute(delete(app_user).where(app_user.c.name == name))
-        cx.execute(insert(app_user).values(**_user_values(name, v)))
+
+
+# ---------------------------------------------------------------- keanggotaan workspace
+
+def member_add(name, ws_id, role):
+    """Jadikan akun anggota workspace (role diperbarui kalau sudah anggota)."""
+    with engine().begin() as cx:
+        r = cx.execute(update(ws_member).where(ws_member.c.user_name == name, ws_member.c.workspace_id == int(ws_id)).values(role=role))
+        if r.rowcount == 0:
+            cx.execute(insert(ws_member).values(user_name=name, workspace_id=int(ws_id), role=role,
+                                                joined_at=int(dt.datetime.now().timestamp())))
+
+
+def member_get(name, ws_id):
+    with engine().connect() as cx:
+        r = cx.execute(select(ws_member).where(ws_member.c.user_name == name, ws_member.c.workspace_id == int(ws_id))).mappings().first()
+    return dict(r) if r else None
+
+
+def member_remove(name, ws_id):
+    with engine().begin() as cx:
+        cx.execute(delete(ws_member).where(ws_member.c.user_name == name, ws_member.c.workspace_id == int(ws_id)))
+
+
+def user_workspaces(name):
+    """Semua workspace yang diikuti akun → [dict(id, name, role, status, owner)] urut nama."""
+    with engine().connect() as cx:
+        rows = cx.execute(select(workspace, ws_member.c.role).select_from(ws_member.join(workspace))
+                          .where(ws_member.c.user_name == name).order_by(workspace.c.name)).mappings().all()
+    return [dict(id=r["id"], name=r["name"], role=r["role"], status=r["status"], owner=r["owner"]) for r in rows]
+
+
+def user_set_active(name, ws_id):
+    """Pindah workspace aktif (harus anggota) → role di workspace itu. ValueError kalau bukan anggota."""
+    m = member_get(name, ws_id)
+    if not m:
+        raise ValueError("bukan anggota workspace itu")
+    with engine().begin() as cx:
+        cx.execute(update(app_user).where(app_user.c.name == name).values(workspace_id=int(ws_id), role=m["role"]))
+    return m["role"]
+
+
+def _user_fallback_ws(cx, name, exclude_ws):
+    """Workspace lain yang masih diikuti akun (untuk pindah aktif otomatis), atau None."""
+    return cx.execute(select(ws_member.c.workspace_id, ws_member.c.role)
+                      .where(ws_member.c.user_name == name, ws_member.c.workspace_id != int(exclude_ws))
+                      .order_by(ws_member.c.joined_at)).first()
 
 
 def user_login_fail(name, lock_after, lock_seconds):
@@ -719,7 +792,7 @@ def ws_list_all():
     with engine().connect() as cx:
         rows = cx.execute(select(workspace).order_by(workspace.c.id)).mappings().all()
         cust = {r["workspace_id"]: dict(r) for r in cx.execute(select(customer)).mappings().all()}
-        members = dict(cx.execute(select(app_user.c.workspace_id, func.count()).group_by(app_user.c.workspace_id)).all())
+        members = dict(cx.execute(select(ws_member.c.workspace_id, func.count()).group_by(ws_member.c.workspace_id)).all())
         tokos = dict(cx.execute(select(toko.c.workspace_id, func.count()).group_by(toko.c.workspace_id)).all())
         files = dict(cx.execute(select(toko.c.workspace_id, func.count(upload.c.id))
                                 .select_from(toko.join(upload, upload.c.toko_id == toko.c.id)).group_by(toko.c.workspace_id)).all())
@@ -752,6 +825,14 @@ def ws_delete(ws_id):
     finally:
         set_ws(prev)
     with engine().begin() as cx:
+        names = [r[0] for r in cx.execute(select(ws_member.c.user_name).where(ws_member.c.workspace_id == ws_id))]
+        cx.execute(delete(ws_member).where(ws_member.c.workspace_id == ws_id))
+        for name in names:
+            other = _user_fallback_ws(cx, name, ws_id)
+            if other:      # masih punya workspace lain → itu jadi aktif
+                cx.execute(update(app_user).where(app_user.c.name == name).values(workspace_id=int(other[0]), role=other[1]))
+            else:          # hanya anggota workspace ini → akunnya ikut terhapus (sesi mati)
+                cx.execute(delete(app_user).where(app_user.c.name == name))
         cx.execute(delete(app_user).where(app_user.c.workspace_id == ws_id))
         cx.execute(delete(ws_invite).where(ws_invite.c.workspace_id == ws_id))
         cx.execute(delete(customer).where(customer.c.workspace_id == ws_id))
@@ -808,9 +889,17 @@ def ws_move_toko(src_ws, dst_ws):
 
 
 def ws_members(ws_id):
+    """Anggota workspace → {name: akun (role = role di workspace ini)}."""
     with engine().connect() as cx:
-        rows = cx.execute(select(app_user).where(app_user.c.workspace_id == int(ws_id)).order_by(app_user.c.created)).mappings().all()
-    return {r["name"]: _user_row(r) for r in rows}
+        rows = cx.execute(select(app_user, ws_member.c.role.label("ws_role"), ws_member.c.joined_at)
+                          .select_from(ws_member.join(app_user, app_user.c.name == ws_member.c.user_name))
+                          .where(ws_member.c.workspace_id == int(ws_id)).order_by(ws_member.c.joined_at, app_user.c.created)).mappings().all()
+    out = {}
+    for r in rows:
+        u = _user_row(r)
+        u["role"] = r["ws_role"] or "user"
+        out[r["name"]] = u
+    return out
 
 
 def invite_add(ws_id, email, role, invited_by):
