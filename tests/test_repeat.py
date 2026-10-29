@@ -109,6 +109,45 @@ def test_repeat_analysis_rules():
     assert R3["no_id"] == 1 and R3["totals"]["customers"] == 4
 
 
+def test_repeat_habits_new_product_vs_new_variant():
+    def ln(oid, created, buyer, product, variation="", ch=parsers.SHOPEE, bruto=100.0):
+        return dict(platform=parsers.SHOPEE if ch == parsers.SHOPEE else parsers.TIKTOK, channel=ch, order_id=oid,
+                    created=pd.Timestamp(created), month=created[:7], status="x", is_batal=False, is_unpaid=False, is_retur=False,
+                    product=product, variation=variation, qty=1.0, bruto=bruto, buyer=buyer, buyer_key=buyer.lower())
+    O = pd.DataFrame([
+        ln("A1", "2026-01-03", "ani", "Kemeja", "Black"),
+        ln("A2", "2026-01-20", "ani", "Kemeja", "Navy"),                       # warna baru, produk sama
+        ln("A3", "2026-02-02", "ani", "Kemeja", "black "),                     # sama persis (beda kapital/spasi tetap sama)
+        ln("A4", "2026-03-02", "ani", "Celana", "Black"), ln("A4", "2026-03-02", "ani", "Kemeja", "Navy"),   # campuran → produk baru
+        ln("B1", "2026-01-10", "budi", "Kemeja", "Black"),
+        ln("B2", "2026-02-10", "budi", "Kemeja", "Black"),                     # sama persis
+        ln("C1", "2026-02-15", "citra", "Rok", ch=parsers.TIKTOK),
+        ln("C2", "2026-03-15", "citra", "Rok", ch=parsers.TIKTOK),             # TikTok tanpa varian → sama persis
+    ])
+    R = analysis.repeat_customers(O)
+    H = R["habits"]
+    T = H["totals"]
+    assert T["orders"] == 5 and T["new"] == 1 and T["variant"] == 1 and T["same"] == 3
+    assert T["new_pct"] == 20.0 and T["new_bruto"] == 200.0
+    by = {c["label"]: c for c in H["channels"]}
+    assert by["Shopee"]["orders"] == 4 and by["TikTok Shop"]["same"] == 1
+    seq = {s["bucket"]: s for s in H["seq"]}
+    assert seq["ke-2"]["orders"] == 3 and seq["ke-2"]["variant"] == 1 and seq["ke-2"]["same"] == 2
+    assert seq["ke-4–5"]["new"] == 1
+    prods = {(p["channel"], p["product"]): p for p in H["products"]}
+    assert prods[("Shopee", "Kemeja")]["customers"] == 2 and prods[("Shopee", "Kemeja")]["lines"] == 4     # A2 A3 A4(Kemeja) B2
+    assert prods[("Shopee", "Kemeja")]["variant"] == 1 and prods[("Shopee", "Kemeja")]["same"] == 3
+    assert H["new_products"][0]["product"] == "Celana" and H["new_products"][0]["customers"] == 1
+    assert H["pairs"] == [dict(channel="Shopee", src="Kemeja", dst="Celana", customers=1)]
+    top = {t["buyer"]: t for t in R["top"]}
+    assert top["ani"]["habit"] == dict(new=1, variant=1, same=1)
+    assert top["citra"]["habit"] == dict(new=0, variant=0, same=1)
+    # periode: riwayat tetap dari semua data; Maret hanya A4 (produk baru) & C2 (sama)
+    H2 = analysis.repeat_customers(O, m_from="2026-03", m_to="2026-03")["habits"]
+    assert H2["totals"]["orders"] == 2 and H2["totals"]["new"] == 1 and H2["totals"]["same"] == 1
+    assert H2["products"][0]["product"] in ("Kemeja", "Rok")
+
+
 def test_api_repeat_and_reparse_old_uploads():
     c = farras()
     assert c.post("/api/toko", json=dict(name=TOKO)).status_code == 200
@@ -133,6 +172,9 @@ def test_api_repeat_and_reparse_old_uploads():
     assert files[0]["uploaded_by"] == "farras"
     x = c.get("/api/repeat.xlsx", params=dict(toko=TOKO))
     assert x.status_code == 200 and x.headers["content-type"].startswith("application/vnd.openxmlformats")
+    from openpyxl import load_workbook
+    import io
+    assert "Kebiasaan order ulang" in load_workbook(io.BytesIO(x.content)).sheetnames
     # workspace lain tidak melihat toko ini
     assert c.get("/api/repeat", params=dict(toko="TokoLain")).status_code == 404
 

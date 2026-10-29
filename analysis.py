@@ -1,6 +1,7 @@
 """Agregasi akrual: semua angka diakui di BULAN ORDER DIBUAT, biaya dicocokkan ke order-nya."""
 import os
 import glob
+import re
 import pandas as pd
 import parsers
 import db
@@ -701,6 +702,162 @@ def _repeat_stats(x, lo):
     )
 
 
+HABIT_CATS = [("new", "Produk baru"), ("variant", "Warna/varian baru, produk sama"), ("same", "Item sama persis")]
+SEQ_BUCKETS = [("ke-2", 2, 2), ("ke-3", 3, 3), ("ke-4–5", 4, 5), ("ke-6+", 6, 10**9)]
+
+
+def _norm_key(s):
+    return s.fillna("").astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+
+
+_TITLE_SEP = re.compile(r"\s+[-–—|]\s+")
+
+
+def product_names(titles):
+    """Nama produk ringkas dari judul listing marketplace (Series) → Series nama.
+
+    Judul dipecah pada ' - ', ' – ', ' | '. Segmen pertama yang pendek (≤ 3 kata) dan dipakai ≥ 15% judul (≥ 2 judul)
+    dianggap prefix brand (mis. "Eltahj", "KARMEN") dan dibuang; nama produk = segmen berikutnya ("Eltahj – Runa Sport
+    Hijab Basic - Kerudung …" → "Runa Sport Hijab Basic"). Jadi listing yang judulnya diganti/diuji A-B tetap satu produk
+    selama segmen namanya sama. Boleh lebih dari satu brand di satu toko.
+    """
+    t = titles.fillna("").astype(str).str.strip()
+    uniq = pd.Series(t.unique())
+    segs = {v: [p.strip() for p in _TITLE_SEP.split(v) if p.strip()] or [v] for v in uniq}
+    firsts = pd.Series([segs[v][0].lower() for v in uniq if len(segs[v]) > 1])
+    vc = firsts.value_counts()
+    brands = {b for b, n in vc.items() if n >= 2 and n >= 0.15 * len(uniq) and len(b.split()) <= 3}
+    name = {}
+    for v in uniq:
+        l = segs[v]
+        if len(l) > 1 and l[0].lower() in brands:
+            l = l[1:]
+        name[v] = l[0]
+    return t.map(name)
+
+
+def _habit_group(x, key):
+    """Ringkasan kategori (new/variant/same) untuk satu kelompok order ulang."""
+    n = int(len(x))
+    out = dict(orders=n, bruto=float(x["bruto"].sum()))
+    for cat, _ in HABIT_CATS:
+        b = x[x["cat"] == cat]
+        out[cat] = int(len(b))
+        out[cat + "_pct"] = round(100 * len(b) / n, 1) if n else 0.0
+        out[cat + "_bruto"] = float(b["bruto"].sum())
+    out.update(key)
+    return out
+
+
+def repeat_habits(O, od, sel, top=20):
+    """Kebiasaan order ulang: tiap order ke-2 dst dibandingkan dengan SEMUA item yang pernah dibeli pelanggan itu sebelumnya.
+
+    Kategori per order diambil yang paling "baru": produk baru (ada item yang produknya belum pernah dibeli) >
+    warna/varian baru (produk sudah pernah, variannya belum) > item sama persis (semua item pernah dibeli persis).
+    Produk = nama listing di marketplace, varian = teks variasi (warna/ukuran) apa adanya; listing yang diganti nama akan
+    terbaca sebagai produk baru. Riwayat dihitung dari semua data; laporan dibatasi order ulang yang ada di `sel` (periode).
+    Mengembalikan juga `by_ckey` (kebiasaan per pelanggan sepanjang data) untuk daftar pelanggan teratas.
+    """
+    empty = dict(channels=[], totals=None, seq=[], products=[], new_products=[], pairs=[], has_variation=False, by_ckey={})
+    sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])]
+    if not len(sold) or not len(od):
+        return empty
+    L = sold[["channel", "order_id", "product", "qty", "bruto"]].copy()
+    L["variation"] = sold["variation"] if "variation" in sold else ""
+    L["product"] = product_names(L["product"])
+    L["variation"] = L["variation"].fillna("").astype(str).str.strip()
+    L["pkey"] = _norm_key(L["product"])
+    L["vkey"] = L["pkey"] + "|" + _norm_key(L["variation"])
+    L = L.merge(od[["channel", "order_id", "ckey", "seq", "month"]], on=["channel", "order_id"], how="inner")
+    if not len(L):
+        return empty
+    empty["has_variation"] = bool((L["variation"] != "").any())
+    labels = {k: v for k, v in zip(zip(L["channel"], L["pkey"]), L["product"])}
+    L = L.sort_values(["ckey", "seq", "order_id"]).reset_index(drop=True)
+    in_sel = set(zip(sel["channel"], sel["order_id"]))
+
+    orders, lines, pairs = [], [], {}
+    seen_p = seen_v = None
+    cur = None          # (ckey, order_id)
+    items = []          # item di order yang sedang dibaca
+
+    def flush(order):
+        nonlocal items
+        if order is None:
+            return
+        if order["seq"] > 1:
+            n = dict(new=0, variant=0, same=0)
+            bruto = 0.0
+            newp = set()
+            for pkey, vkey, product, qty, b in items:
+                cat = "new" if pkey not in seen_p else ("variant" if vkey not in seen_v else "same")
+                n[cat] += 1
+                bruto += b
+                lines.append(dict(channel=order["channel"], ckey=order["ckey"], order_id=order["order_id"], pkey=pkey, cat=cat, qty=qty, bruto=b))
+                if cat == "new":
+                    newp.add(pkey)
+            cat = "new" if n["new"] else ("variant" if n["variant"] else "same")
+            orders.append(dict(order, cat=cat, n_new=n["new"], n_variant=n["variant"], n_same=n["same"], bruto=bruto))
+            if newp and (order["channel"], order["order_id"]) in in_sel:
+                for np_ in newp:
+                    for op in seen_p:
+                        pairs.setdefault((order["channel"], op, np_), set()).add(order["ckey"])
+        for pkey, vkey, *_ in items:
+            seen_p.add(pkey)
+            seen_v.add(vkey)
+        items = []
+
+    for r in L.itertuples(index=False):
+        if cur is None or r.ckey != cur["ckey"]:
+            flush(cur)
+            seen_p, seen_v = set(), set()
+            cur = dict(ckey=r.ckey, channel=r.channel, order_id=r.order_id, seq=int(r.seq), month=r.month)
+        elif r.order_id != cur["order_id"]:
+            flush(cur)
+            cur = dict(ckey=r.ckey, channel=r.channel, order_id=r.order_id, seq=int(r.seq), month=r.month)
+        items.append((r.pkey, r.vkey, r.product, float(r.qty or 0), float(r.bruto or 0)))
+    flush(cur)
+    if not orders:
+        return empty
+
+    OD = pd.DataFrame(orders)
+    LN = pd.DataFrame(lines)
+    # kebiasaan per pelanggan (sepanjang data) untuk daftar pelanggan teratas
+    bc = OD.groupby("ckey").agg(n_new=("cat", lambda s: int((s == "new").sum())), n_variant=("cat", lambda s: int((s == "variant").sum())),
+                                n_same=("cat", lambda s: int((s == "same").sum())))
+    empty["by_ckey"] = {k: dict(new=int(r.n_new), variant=int(r.n_variant), same=int(r.n_same)) for k, r in bc.iterrows()}
+
+    mask = [(c, o) in in_sel for c, o in zip(OD["channel"], OD["order_id"])]
+    OD = OD[mask]
+    if not len(OD):
+        return empty
+    LN = LN[[(c, o) in in_sel for c, o in zip(LN["channel"], LN["order_id"])]]
+
+    channels = []
+    for ch in [c for c in (SHOPEE, TIKTOK, TOKOPEDIA) if c in set(OD["channel"])]:
+        channels.append(_habit_group(OD[OD["channel"] == ch], dict(channel=ch, label=CHANNEL_LABEL.get(ch, ch))))
+    totals = _habit_group(OD, dict(channel="all", label="Gabungan"))
+    seq = [_habit_group(OD[(OD["seq"] >= lo) & (OD["seq"] <= hi)], dict(bucket=label)) for label, lo, hi in SEQ_BUCKETS]
+    seq = [s for s in seq if s["orders"]]
+
+    def prod_table(df, cats):
+        d = df[df["cat"].isin(cats)]
+        if not len(d):
+            return []
+        g = d.groupby(["channel", "pkey"]).agg(lines=("cat", "size"), customers=("ckey", "nunique"), qty=("qty", "sum"), bruto=("bruto", "sum"),
+                                               same=("cat", lambda s: int((s == "same").sum())), variant=("cat", lambda s: int((s == "variant").sum())))
+        g = g.sort_values(["customers", "lines"], ascending=False).head(top)
+        return [dict(channel=CHANNEL_LABEL.get(ch, ch), product=labels.get((ch, pk), pk), lines=int(r.lines), customers=int(r.customers),
+                     qty=float(r.qty), bruto=float(r.bruto), same=int(r.same), variant=int(r.variant)) for (ch, pk), r in g.iterrows()]
+
+    products = prod_table(LN, ["same", "variant"])
+    new_products = prod_table(LN, ["new"])
+    pr = sorted(pairs.items(), key=lambda kv: -len(kv[1]))[:top]
+    pair_rows = [dict(channel=CHANNEL_LABEL.get(ch, ch), src=labels.get((ch, a), a), dst=labels.get((ch, b), b), customers=len(cs)) for (ch, a, b), cs in pr]
+    empty.update(channels=channels, totals=totals, seq=seq, products=products, new_products=new_products, pairs=pair_rows)
+    return empty
+
+
 def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
     """Analisa transaksi berulang per pelanggan & per platform.
 
@@ -712,7 +869,7 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
     """
     O = _channel_filter(O, platform)
     empty = dict(channels=[], monthly=[], months=[], dist=[], gap=[], cohorts=[], cohort_cols=0, top=[], totals=None,
-                 no_id=0, no_id_bruto=0.0, has_buyer=False)
+                 no_id=0, no_id_bruto=0.0, has_buyer=False, habits=None)
     if not len(O):
         return empty
     od = _buyer_orders(O)
@@ -817,6 +974,10 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
                 row["pct"].append(round(100 * n / size, 1))
             cohorts.append(row)
 
+    # kebiasaan order ulang: produk baru / warna-varian baru / item sama persis
+    H = repeat_habits(O, od, sel)
+    by_ckey = H.pop("by_ckey", {})
+
     # pelanggan teratas (aktif di periode): urut jumlah order sepanjang data lalu bruto periode
     per_top = sel.groupby("ckey").agg(channel=("channel", "first"), buyer=("buyer", "first"), orders=("order_id", "nunique"),
                                       n_total=("n_total", "first"), qty=("qty", "sum"), bruto=("bruto", "sum"),
@@ -831,10 +992,10 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
                                  orders=int(r["orders"]), orders_total=int(r["n_total"]), qty=float(r["qty"]), bruto=float(r["bruto"]),
                                  first=str(r["first"])[:10], last=str(r["last"])[:10], span_days=span,
                                  gap_avg=round(span / (r["n_total"] - 1), 1) if span is not None and r["n_total"] > 1 else None,
-                                 product=prods.get(key, "")))
+                                 product=prods.get(key, ""), habit=by_ckey.get(key)))
 
     empty.update(channels=channels, totals=totals, monthly=monthly, months=months, dist=dist, gap=gap, gap_second=gap_second,
-                 cohorts=cohorts, cohort_cols=cohort_cols, top=top_rows)
+                 cohorts=cohorts, cohort_cols=cohort_cols, top=top_rows, habits=H)
     return empty
 
 
@@ -873,8 +1034,23 @@ def export_repeat_xlsx(toko, O, platform="all", m_from=None, m_to=None):
           [[g["bucket"], g["orders"], g["orders_pct"], g["bruto"]] for g in R["gap"]])
     sheet("Kohort retensi %", ["Kohort (bulan order pertama)", "Pelanggan"] + [f"+{k} bln" for k in range(R["cohort_cols"])],
           [[c["cohort"], c["size"]] + c["pct"] for c in R["cohorts"]])
+    H = R.get("habits") or {}
+    hk = ["orders", "new", "new_pct", "new_bruto", "variant", "variant_pct", "variant_bruto", "same", "same_pct", "same_bruto"]
+    hh = ["Order ulang", "Produk baru", "% produk baru", "Bruto produk baru", "Warna/varian baru", "% warna/varian baru", "Bruto warna/varian baru",
+          "Item sama persis", "% item sama", "Bruto item sama"]
+    sheet("Kebiasaan order ulang", ["Platform / urutan order"] + hh,
+          [[s["label"]] + [s.get(k) for k in hk] for s in H.get("channels", [])]
+          + ([[H["totals"]["label"]] + [H["totals"].get(k) for k in hk]] if H.get("totals") else [])
+          + [["Order " + s["bucket"]] + [s.get(k) for k in hk] for s in H.get("seq", [])])
+    sheet("Produk dibeli ulang", ["Platform", "Produk", "Pelanggan", "Item dibeli ulang", "Item sama persis", "Warna/varian baru", "Qty", "Bruto"],
+          [[p["channel"], p["product"], p["customers"], p["lines"], p["same"], p["variant"], p["qty"], p["bruto"]] for p in H.get("products", [])])
+    sheet("Produk baru pelanggan lama", ["Platform", "Produk", "Pelanggan", "Item", "Qty", "Bruto"],
+          [[p["channel"], p["product"], p["customers"], p["lines"], p["qty"], p["bruto"]] for p in H.get("new_products", [])])
+    sheet("Lanjut beli", ["Platform", "Pernah beli", "Lalu beli (produk baru)", "Pelanggan"],
+          [[p["channel"], p["src"], p["dst"], p["customers"]] for p in H.get("pairs", [])])
+    hab = lambda h: "" if not h else f'{h["new"]} produk baru · {h["variant"]} warna/varian baru · {h["same"]} item sama'
     sheet("Pelanggan berulang", ["Platform", "Pelanggan", "Order di periode", "Order sepanjang data", "Qty", "Bruto periode", "Order pertama",
-                                 "Order terakhir", "Rentang (hari)", "Rata-rata jarak (hari)", "Produk paling sering"],
-          [[t["channel"], t["buyer"], t["orders"], t["orders_total"], t["qty"], t["bruto"], t["first"], t["last"], t["span_days"], t["gap_avg"], t["product"]]
+                                 "Order terakhir", "Rentang (hari)", "Rata-rata jarak (hari)", "Produk paling sering", "Kebiasaan order ulang"],
+          [[t["channel"], t["buyer"], t["orders"], t["orders_total"], t["qty"], t["bruto"], t["first"], t["last"], t["span_days"], t["gap_avg"], t["product"], hab(t.get("habit"))]
            for t in R["top"]])
     return wb

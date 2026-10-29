@@ -222,6 +222,18 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
         <div class="card"><h2>Berapa kali pelanggan membeli</h2><div class="desc">Pelanggan yang aktif di periode, dikelompokkan menurut total order-nya sepanjang data. Bruto = bruto mereka di periode.</div><div class="tblwrap"><table id="tblRepDist"></table></div></div>
         <div class="card"><h2>Jarak antar order ulang</h2><div class="desc">Hari sejak order sebelumnya, untuk order ke-2 dst yang jatuh di periode. <span id="repGap2"></span></div><div class="tblwrap"><table id="tblRepGap"></table></div></div>
       </div>
+      <div class="card"><h2>Kebiasaan order ulang: produk baru, warna baru, atau item yang sama?</h2><div class="desc">Tiap <b>order ulang</b> (order ke-2 dst yang jatuh di periode) dibandingkan dengan <b>semua</b> item yang pernah dibeli pelanggan itu sebelumnya. <b>Produk baru</b> = ada item yang produknya belum pernah ia beli; <b>warna/varian baru</b> = produknya sudah pernah dibeli tapi warna/variannya belum; <b>item sama persis</b> = semua item pernah dibeli persis sama. Order campuran masuk kategori yang paling "baru". Produk = nama listing di marketplace, varian = teks variasi (warna/ukuran) apa adanya — listing yang diganti nama akan terbaca sebagai produk baru.</div>
+        <div class="tiles" id="repHabTiles"></div>
+        <div class="grid2">
+          <div><div class="tblwrap"><table id="tblRepHab"></table></div></div>
+          <div><div class="chart"><canvas id="chRepHab"></canvas></div><div class="legend" id="lgRepHab"></div></div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card"><h2>Produk yang paling sering dibeli ulang</h2><div class="desc">Item di order ulang (periode) yang produknya sudah pernah dibeli pelanggan itu, dipecah: persis sama vs warna/varian baru. Urut jumlah pelanggan.</div><div class="tblwrap" style="max-height:50vh"><table id="tblRepHabProd"></table></div></div>
+        <div class="card"><h2>Produk baru yang dibeli pelanggan lama</h2><div class="desc">Produk yang dibeli di order ulang (periode) padahal belum pernah dibeli pelanggan itu — kandidat produk "pintu kedua".</div><div class="tblwrap" style="max-height:50vh"><table id="tblRepHabNew"></table></div></div>
+      </div>
+      <div class="card"><h2>Sudah beli apa, lalu beli apa</h2><div class="desc">Pasangan produk: pelanggan yang pernah membeli produk kiri, lalu di order ulangnya (periode) membeli produk kanan untuk pertama kali. Satu pelanggan dihitung sekali per pasangan, urut jumlah pelanggan.</div><div class="tblwrap" style="max-height:50vh"><table id="tblRepHabPair"></table></div></div>
       <div class="card"><h2>Retensi kohort</h2><div class="desc">Kohort = bulan order pertama pelanggan. Kolom <b>+k</b> = % pelanggan kohort itu yang order lagi k bulan kemudian (+0 selalu 100%). Warna makin pekat = makin banyak yang kembali.</div><div class="tblwrap"><table id="tblRepCohort"></table></div></div>
       <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Pelanggan berulang teratas</h2><div class="desc">50 pelanggan dengan order terbanyak (sepanjang data) yang aktif di periode. Shopee = username; TikTok/Tokopedia menyamarkan nama pembeli, dicocokkan dari pola nama + nomor HP tersamar (bisa sedikit meleset). Daftar lengkap ada di Excel.</div></div><input type="text" id="repSearch" placeholder="🔍 cari pelanggan / produk…" style="min-width:240px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblRepTop"></table></div></div>
     </div>
@@ -783,12 +795,37 @@ function renderRepeat(){
   const K=R.cohort_cols||0; const C=R.cohorts||[];
   const heat=v=>{ if(v==null) return ''; const a=Math.min(1,v/40); return `background:rgba(94,26,241,${(0.08+0.6*a).toFixed(2)});color:${a>0.55?'#fff':'#1E1E1E'}` };
   $('#tblRepCohort').innerHTML='<tr><th class="l">Kohort</th><th>Pelanggan</th>'+Array.from({length:K},(_,k)=>`<th>+${k}</th>`).join('')+'</tr>'+(C.length?C.map(c=>`<tr><td class="l">${monthLabel(c.cohort)}</td><td>${fmt(c.size)}</td>`+Array.from({length:K},(_,k)=>k<c.pct.length?`<td style="${k?heat(c.pct[k]):''}">${pct(c.pct[k])}</td>`:'<td class="muted">–</td>').join('')+'</tr>').join(''):'<tr><td class="muted">belum cukup bulan</td></tr>');
+  renderRepHabits();
   renderRepTop();
 }
+const HAB=[['new','Produk baru','#F4561E'],['variant','Warna/varian baru, produk sama','#5E1AF1'],['same','Item sama persis','#9CA3AF']];
+const ell=(t,w)=>`<td class="l small" style="max-width:${w||260}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${(t||'').replace(/"/g,'&quot;')}">${t||''}</td>`;
+function renderRepHabits(){
+  const H=REP.habits; const T=H&&H.totals;
+  if(!T){ $('#repHabTiles').innerHTML=''; $('#tblRepHab').innerHTML='<tr><td class="muted">belum ada order ulang di periode ini</td></tr>'; ['tblRepHabProd','tblRepHabNew','tblRepHabPair'].forEach(id=>$('#'+id).innerHTML=''); if(charts.chRepHab){charts.chRepHab.destroy(); delete charts.chRepHab;} $('#lgRepHab').innerHTML=''; return; }
+  $('#repHabTiles').innerHTML=HAB.map(([k,l,c])=>`<div class="tile"><div class="k" style="color:${c}">${l}</div><div class="v">${pct(T[k+'_pct'])}</div><div class="s">${fmt(T[k])} dari ${fmt(T.orders)} order ulang · bruto ${fmtJt(T[k+'_bruto'])}</div></div>`).join('')
+    +(H.has_variation?'':'<div class="tile"><div class="k">Catatan</div><div class="v" style="font-size:13px;font-weight:600">Tanpa data varian</div><div class="s">file pesanan ini tidak memuat kolom variasi, jadi warna/varian baru tidak bisa dibedakan dari item sama</div></div>');
+  const pillOf=l=>{const k=l.split(' ')[0]; const c=COL[k]||'#8A8A99'; return `<i class="pill" style="background:${c}22;color:${c}">${l}</i>`};
+  const rowOf=(s,label,tot)=>`<tr class="${tot?'tot':''}"><td class="l">${label}</td><td>${fmt(s.orders)}</td><td>${fmt(s.new)}</td><td>${pct(s.new_pct)}</td><td>${fmt(s.variant)}</td><td>${pct(s.variant_pct)}</td><td>${fmt(s.same)}</td><td>${pct(s.same_pct)}</td></tr>`;
+  $('#tblRepHab').innerHTML='<tr><th class="l">Platform / urutan order</th><th>Order ulang</th><th>Produk baru</th><th>%</th><th>Warna/ varian baru</th><th>%</th><th>Item sama</th><th>%</th></tr>'
+    +(H.channels||[]).map(s=>rowOf(s,pillOf(s.label),false)).join('')+((H.channels||[]).length>1?rowOf(T,T.label,true):'')
+    +(H.seq||[]).map(s=>rowOf(s,'Order '+s.bucket,false)).join('');
+  const S=H.seq||[];
+  mkChart('chRepHab',{type:'bar',data:{labels:S.map(s=>'Order '+s.bucket),datasets:HAB.map(([k,l,c])=>({label:l,data:S.map(s=>s[k+'_pct']),backgroundColor:c,borderRadius:3,borderSkipped:'bottom'}))},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',titleColor:'#1E1E1E',bodyColor:'#1E1E1E',borderColor:'#1E1E1E',borderWidth:1,callbacks:{label:c=>' '+c.dataset.label+': '+pct(c.raw)+' ('+fmt(S[c.dataIndex][HAB[c.datasetIndex][0]])+' order)'}}},scales:{x:{stacked:true,grid:{display:false},ticks:{color:'#5B5B6B'}},y:{stacked:true,min:0,max:100,grid:{color:'#EEE'},border:{display:false},ticks:{color:'#5B5B6B',callback:v=>v+'%'}}}}});
+  legend('#lgRepHab',HAB.map(([k,l,c])=>({c,l})));
+  const P=H.products||[];
+  $('#tblRepHabProd').innerHTML='<tr><th class="l">Platform</th><th class="l">Produk</th><th>Pelanggan</th><th>Item dibeli ulang</th><th>Sama persis</th><th>Warna/ varian baru</th><th>Bruto</th></tr>'+(P.length?P.map(p=>`<tr><td class="l">${p.channel}</td>${ell(p.product)}<td>${fmt(p.customers)}</td><td>${fmt(p.lines)}</td><td>${fmt(p.same)}</td><td>${fmt(p.variant)}</td><td>${fmt(p.bruto)}</td></tr>`).join(''):'<tr><td class="muted" colspan="7">belum ada</td></tr>');
+  const N=H.new_products||[];
+  $('#tblRepHabNew').innerHTML='<tr><th class="l">Platform</th><th class="l">Produk</th><th>Pelanggan</th><th>Item</th><th>Bruto</th></tr>'+(N.length?N.map(p=>`<tr><td class="l">${p.channel}</td>${ell(p.product)}<td>${fmt(p.customers)}</td><td>${fmt(p.lines)}</td><td>${fmt(p.bruto)}</td></tr>`).join(''):'<tr><td class="muted" colspan="5">belum ada</td></tr>');
+  const Q=H.pairs||[];
+  $('#tblRepHabPair').innerHTML='<tr><th class="l">Platform</th><th class="l">Pernah beli</th><th class="l">Lalu beli (produk baru)</th><th>Pelanggan</th></tr>'+(Q.length?Q.map(p=>`<tr><td class="l">${p.channel}</td>${ell(p.src,320)}${ell(p.dst,320)}<td>${fmt(p.customers)}</td></tr>`).join(''):'<tr><td class="muted" colspan="4">belum ada pelanggan lama yang membeli produk baru di periode ini</td></tr>');
+}
+const habTxt=h=>!h?'–':`<span style="color:#F4561E">${h.new}</span> / <span style="color:#5E1AF1">${h.variant}</span> / <span style="color:#6B7280">${h.same}</span>`;
 function renderRepTop(){
   const q=($('#repSearch').value||'').toLowerCase().trim();
   const rows=(REP.top||[]).filter(t=>!q||(t.buyer+' '+t.product+' '+t.channel).toLowerCase().includes(q));
-  $('#tblRepTop').innerHTML='<tr><th class="l">Platform</th><th class="l">Pelanggan</th><th>Order di periode</th><th>Order sepanjang data</th><th>Qty</th><th>Bruto periode</th><th>Order pertama</th><th>Order terakhir</th><th>Rata-rata jarak (hari)</th><th class="l">Produk paling sering</th></tr>'+(rows.length?rows.map(t=>`<tr><td class="l">${t.channel}</td><td class="l">${t.buyer}</td><td>${fmt(t.orders)}</td><td>${fmt(t.orders_total)}</td><td>${fmt(t.qty)}</td><td>${fmt(t.bruto)}</td><td>${t.first}</td><td>${t.last}</td><td>${t.gap_avg==null?'–':fmt(t.gap_avg)}</td><td class="l small" style="max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${t.product.replace(/"/g,'&quot;')}">${t.product}</td></tr>`).join(''):'<tr><td class="muted" colspan="10">belum ada pelanggan yang order lebih dari sekali</td></tr>');
+  $('#tblRepTop').innerHTML='<tr><th class="l">Platform</th><th class="l">Pelanggan</th><th>Order di periode</th><th>Order sepanjang data</th><th>Qty</th><th>Bruto periode</th><th>Order pertama</th><th>Order terakhir</th><th>Rata-rata jarak (hari)</th><th class="l">Produk paling sering</th><th title="jumlah order ulang sepanjang data: produk baru / warna-varian baru / item sama">Order ulang: baru / warna / sama</th></tr>'+(rows.length?rows.map(t=>`<tr><td class="l">${t.channel}</td><td class="l">${t.buyer}</td><td>${fmt(t.orders)}</td><td>${fmt(t.orders_total)}</td><td>${fmt(t.qty)}</td><td>${fmt(t.bruto)}</td><td>${t.first}</td><td>${t.last}</td><td>${t.gap_avg==null?'–':fmt(t.gap_avg)}</td>${ell(t.product)}<td style="white-space:nowrap">${habTxt(t.habit)}</td></tr>`).join(''):'<tr><td class="muted" colspan="11">belum ada pelanggan yang order lebih dari sekali</td></tr>');
 }
 $('#repSearch').oninput=()=>{ if(REP) renderRepTop(); };
 $('#btnRepeatX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/repeat.xlsx?'+qs({platform:$('#platform').value}); };
