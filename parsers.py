@@ -136,8 +136,29 @@ def parse_shopee_orders(path):
     out["harga_awal"] = df["Harga Awal"].map(to_num) * out["qty"]
     out["payment"] = df["Metode Pembayaran"].str.strip()
     out["cancel_reason"] = df["Alasan Pembatalan"].str.strip()
+    # identitas pembeli (buat analisa pelanggan berulang): Shopee memberi username utuh; nama penerima & telepon disamarkan
+    uname = df["Username (Pembeli)"].str.strip() if "Username (Pembeli)" in df.columns else pd.Series([""] * len(df))
+    rcpt = df["Nama Penerima"].str.strip() if "Nama Penerima" in df.columns else pd.Series([""] * len(df))
+    phone = df["No. Telepon"].str.strip() if "No. Telepon" in df.columns else pd.Series([""] * len(df))
+    out["buyer"] = uname.where(uname != "", rcpt)
+    out["buyer_key"] = _buyer_key(uname, rcpt, phone)
     out["line_key"] = out["order_id"] + "|" + out["sku"] + "|" + out["variation"] + "|" + out["product"]
     return out
+
+
+# akun agregat milik marketplace, bukan pelanggan: Shopee SIP (pembeli luar negeri lewat Shopee International Platform)
+AGGREGATE_BUYERS = {"sipbuyerid"}
+
+
+def _buyer_key(uname, rcpt, phone):
+    """Kunci pelanggan: username kalau ada; kalau username disamarkan/kosong, gabungan nama penerima + telepon (tersamar) agar tetap bisa dicocokkan."""
+    uname = uname.fillna("").astype(str).str.strip().str.lower()
+    rcpt = rcpt.fillna("").astype(str).str.strip().str.lower()
+    phone = phone.fillna("").astype(str).str.strip()
+    masked = uname.eq("") | uname.str.contains(r"\*")
+    alt = (uname + "|" + rcpt + "|" + phone).where(masked, uname)
+    alt = alt.where((uname != "") | (rcpt != "") | (phone != ""), "")
+    return alt.where(~uname.isin(AGGREGATE_BUYERS), "")
 
 
 # ---------------------------------------------------------------- Shopee income
@@ -330,6 +351,13 @@ def parse_tiktok_orders(path):
     out["harga_awal"] = before
     out["payment"] = df.get("Payment Method", "")
     out["cancel_reason"] = df.get("Cancel Reason", "")
+    # identitas pembeli: TikTok menyamarkan username ("D***i a***iarini") dan telepon ("(+62)812*****60") →
+    # kunci = gabungan keduanya (+ nama penerima) supaya pelanggan yang sama tetap terkumpul
+    uname = df["Buyer Username"] if "Buyer Username" in df.columns else pd.Series([""] * len(df))
+    rcpt = df["Recipient"] if "Recipient" in df.columns else pd.Series([""] * len(df))
+    phone = df["Phone #"] if "Phone #" in df.columns else pd.Series([""] * len(df))
+    out["buyer"] = uname.where(uname != "", rcpt)
+    out["buyer_key"] = _buyer_key(uname, rcpt, phone)
     out["line_key"] = out["order_id"] + "|" + out["sku_id"] + "|" + out["variation"]
     return out
 
@@ -530,7 +558,7 @@ def tiktok_income_summary(wb):
 
 # ---------------------------------------------------------------- entry point + cache
 
-PARSER_VERSION = "10"
+PARSER_VERSION = "11"
 
 KINDS = {
     "shopee_orders": "Shopee · Order.all",

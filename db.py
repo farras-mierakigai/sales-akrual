@@ -163,6 +163,7 @@ ORDER_COLS = [
     ("status_raw", Text), ("status", String(32)), ("is_batal", Boolean), ("is_unpaid", Boolean), ("is_return", Boolean),
     ("sku", Text), ("sku_id", Text), ("product", Text), ("variation", Text), ("qty", Float), ("bruto", Float),
     ("harga_awal", Float), ("payment", Text), ("cancel_reason", Text), ("line_key", Text), ("file", Text), ("file_mtime", Float),
+    ("buyer", Text), ("buyer_key", Text),      # identitas pembeli (sejak parser 11) — analisa pelanggan berulang
 ]
 INCOME_COLS = [
     ("platform", String(16)), ("channel", String(16)), ("order_id", String(64)), ("created", DateTime), ("settled", DateTime),
@@ -277,6 +278,10 @@ def _migrate_schema(eng):
         cols_toko = {c["name"] for c in sa.inspect(cx).get_columns("toko")}
         if "workspace_id" not in cols_toko:
             run(cx, f"ALTER TABLE toko ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT {DEFAULT_WS}")
+        cols_ol = {c["name"] for c in sa.inspect(cx).get_columns("order_line")}
+        for col in ("buyer", "buyer_key"):
+            if col not in cols_ol:
+                run(cx, f"ALTER TABLE order_line ADD COLUMN {col} TEXT")
         cols_ws = {c["name"] for c in sa.inspect(cx).get_columns("workspace")}
         if "status" not in cols_ws:
             run(cx, "ALTER TABLE workspace ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active'")
@@ -461,14 +466,18 @@ def ingest_file(name, path, uploaded_by=""):
     st = os.stat(path)
     with engine().begin() as cx:
         tid = toko_id(cx, name, create=True)
-        old = cx.execute(select(upload.c.id).where(upload.c.toko_id == tid, upload.c.file == m["file"])).scalar()
-        if old is not None:
+        prev = cx.execute(select(upload.c.id, upload.c.uploaded_by, upload.c.uploaded_at)
+                          .where(upload.c.toko_id == tid, upload.c.file == m["file"])).first()
+        by, at = uploaded_by or "", dt.datetime.now()
+        if prev is not None:
+            if not uploaded_by:          # parse ulang file yang sama (mis. reingest): pengunggah & waktu unggah asli dipertahankan
+                by, at = prev[1] or "", prev[2] or at
             for t, _ in LINE_TABLES.values():
-                cx.execute(delete(t).where(t.c.upload_id == old))
-            cx.execute(delete(upload).where(upload.c.id == old))
+                cx.execute(delete(t).where(t.c.upload_id == prev[0]))
+            cx.execute(delete(upload).where(upload.c.id == prev[0]))
         row = dict(toko_id=tid, file=m["file"], kind=r["kind"], mtime=float(m["mtime"]), size=int(st.st_size), seller=m.get("seller") or "",
                    summary=json.dumps(m.get("summary") or {}, ensure_ascii=False, default=str),
-                   parser_version=parsers.PARSER_VERSION, uploaded_by=uploaded_by or "", uploaded_at=dt.datetime.now())
+                   parser_version=parsers.PARSER_VERSION, uploaded_by=by, uploaded_at=at)
         for k in ("orders", "income", "unsettled"):
             row[k + "_rows"] = m.get(k + "_rows")
             row[k + "_from"] = m.get(k + "_from")
@@ -480,6 +489,41 @@ def ingest_file(name, path, uploaded_by=""):
                 _insert_df(cx, t, _df_for_insert(df, cols, tid, uid))
         bump(cx, tid)
     return dict(file=m["file"], kind=r["kind"])
+
+
+BUYER_PARSER = 11   # versi parser pertama yang menyimpan identitas pembeli
+
+
+def uploads_needing_buyer(name):
+    """File pesanan di toko ini yang diproses parser lama (belum ada kolom pembeli) → [nama file]."""
+    with engine().connect() as cx:
+        tid = toko_id(cx, name)
+        if tid is None:
+            return []
+        rows = cx.execute(select(upload.c.file, upload.c.parser_version).where(upload.c.toko_id == tid,
+                                                                               upload.c.kind.in_(("shopee_orders", "tiktok_orders")))).all()
+    out = []
+    for f, v in rows:
+        try:
+            old = int(v or 0) < BUYER_PARSER
+        except ValueError:
+            old = True
+        if old:
+            out.append(f)
+    return out
+
+
+def reingest_old_orders(name):
+    """Parse ulang file pesanan lama dari arsip supaya kolom pembeli terisi. → (jumlah diproses, [file arsip tidak ada])."""
+    done, missing = 0, []
+    for f in uploads_needing_buyer(name):
+        path = os.path.join(archive_dir(name), f)
+        if not os.path.isfile(path):
+            missing.append(f)
+            continue
+        ingest_file(name, path)
+        done += 1
+    return done, missing
 
 
 def delete_file(name, file):

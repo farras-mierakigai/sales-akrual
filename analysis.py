@@ -650,3 +650,231 @@ def export_xlsx(toko, O, I, m_from=None, m_to=None, U=None, ads=None, d_from=Non
                 ws[f"{L}{r}"].number_format = "#,##0"
                 ws[f"{L}{r}"].alignment = Alignment(horizontal="right")
     return wb
+
+
+# ---------------------------------------------------------------- pelanggan berulang (repeat purchase) per platform
+
+CHANNEL_LABEL = {SHOPEE: "Shopee", TIKTOK: "TikTok Shop", TOKOPEDIA: "Tokopedia"}
+ORDER_BUCKETS = [("1", 1, 1), ("2", 2, 2), ("3", 3, 3), ("4–5", 4, 5), ("6+", 6, 10**9)]
+GAP_BUCKETS = [("≤ 7 hari", 0, 7), ("8–30 hari", 8, 30), ("31–60 hari", 31, 60), ("61–90 hari", 61, 90),
+               ("91–180 hari", 91, 180), ("> 180 hari", 181, 10**9)]
+
+
+def _buyer_orders(O):
+    """Satu baris per ORDER terjual (non-batal, non-retur, sudah bayar) beserta identitas pembeli."""
+    sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])]
+    if not len(sold):
+        return pd.DataFrame(columns=["channel", "order_id", "buyer_key", "buyer", "created", "month", "bruto", "qty", "product"])
+    if "buyer_key" not in sold:
+        sold = sold.assign(buyer_key="", buyer="")
+    sold = sold.assign(buyer_key=sold["buyer_key"].fillna("").astype(str), buyer=sold["buyer"].fillna("").astype(str))
+    od = sold.groupby(["channel", "order_id"], sort=False).agg(
+        buyer_key=("buyer_key", "first"), buyer=("buyer", "first"), created=("created", "min"), month=("month", "first"),
+        bruto=("bruto", "sum"), qty=("qty", "sum"), product=("product", "first")).reset_index()
+    return od
+
+
+def _repeat_stats(x, lo):
+    """Ringkasan satu kelompok order (sudah ada kolom seq, n_total, first_month, gap_days). lo = bulan awal periode."""
+    if not len(x):
+        return None
+    per = x.groupby("ckey").agg(n=("order_id", "nunique"), n_total=("n_total", "first"), bruto=("bruto", "sum"),
+                                first_month=("first_month", "first"))
+    cust = int(len(per))
+    orders = int(per["n"].sum())
+    bruto = float(per["bruto"].sum())
+    rep = per[per["n_total"] >= 2]
+    ret_orders = x[x["seq"] > 1]
+    gaps = ret_orders["gap_days"].dropna()
+    new = per[per["first_month"] >= lo] if lo else per
+    return dict(
+        customers=cust, orders=orders, bruto=bruto,
+        new_customers=int(len(new)), returning_customers=cust - int(len(new)),
+        repeat_customers=int(len(rep)), repeat_pct=round(100 * len(rep) / cust, 1) if cust else 0.0,
+        repeat_orders=int(len(ret_orders)), repeat_orders_pct=round(100 * len(ret_orders) / orders, 1) if orders else 0.0,
+        repeat_bruto=float(ret_orders["bruto"].sum()), repeat_bruto_pct=round(100 * ret_orders["bruto"].sum() / bruto, 1) if bruto else 0.0,
+        orders_per_customer=round(orders / cust, 2) if cust else 0.0,
+        bruto_per_customer=round(bruto / cust) if cust else 0.0,
+        aov=round(bruto / orders) if orders else 0.0,
+        gap_median=float(gaps.median()) if len(gaps) else None,
+        gap_avg=round(float(gaps.mean()), 1) if len(gaps) else None,
+    )
+
+
+def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
+    """Analisa transaksi berulang per pelanggan & per platform.
+
+    Basis = order TERJUAL (non-batal, non-retur, sudah bayar) dari file pesanan. Identitas pelanggan: Shopee = username pembeli;
+    TikTok/Tokopedia = pola username + telepon yang disamarkan TikTok (jadi bisa sedikit meleset). Pelanggan tidak bisa
+    dicocokkan lintas platform (username berbeda), karena itu semua angka per channel; "gabungan" = penjumlahan.
+    Urutan order per pelanggan dihitung dari SEMUA data toko, baru dibatasi ke periode terpilih → "pelanggan baru" =
+    order pertamanya memang jatuh di periode itu.
+    """
+    O = _channel_filter(O, platform)
+    empty = dict(channels=[], monthly=[], months=[], dist=[], gap=[], cohorts=[], cohort_cols=0, top=[], totals=None,
+                 no_id=0, no_id_bruto=0.0, has_buyer=False)
+    if not len(O):
+        return empty
+    od = _buyer_orders(O)
+    if not len(od):
+        return empty
+    empty["has_buyer"] = bool((od["buyer_key"] != "").any())
+    noid = od[od["buyer_key"] == ""]
+    od = od[od["buyer_key"] != ""].copy()
+    if m_from:
+        noid = noid[noid["month"] >= m_from]
+    if m_to:
+        noid = noid[noid["month"] <= m_to]
+    empty["no_id"] = int(len(noid))
+    empty["no_id_bruto"] = float(noid["bruto"].sum())
+    if not len(od):
+        return empty
+
+    od["ckey"] = od["channel"] + "|" + od["buyer_key"]
+    od = od.sort_values(["created", "order_id"]).reset_index(drop=True)
+    g = od.groupby("ckey", sort=False)
+    od["seq"] = g.cumcount() + 1
+    od["n_total"] = g["order_id"].transform("count")
+    od["first_month"] = g["month"].transform("min")
+    od["first_created"] = g["created"].transform("min")
+    od["last_created"] = g["created"].transform("max")
+    od["gap_days"] = (od["created"] - g["created"].shift()).dt.days
+
+    sel = od
+    if m_from:
+        sel = sel[sel["month"] >= m_from]
+    if m_to:
+        sel = sel[sel["month"] <= m_to]
+    if not len(sel):
+        return empty
+    months = sorted(m for m in sel["month"].dropna().unique() if m and m != "NaT")
+
+    # per channel + gabungan
+    channels = []
+    for ch in [c for c in (SHOPEE, TIKTOK, TOKOPEDIA) if c in set(sel["channel"])]:
+        s = _repeat_stats(sel[sel["channel"] == ch], m_from or (months[0] if months else None))
+        s.update(channel=ch, label=CHANNEL_LABEL.get(ch, ch))
+        channels.append(s)
+    totals = _repeat_stats(sel, m_from or (months[0] if months else None))
+    totals.update(channel="all", label="Gabungan")
+
+    # per bulan: pelanggan baru vs lama (per bulan tiap pelanggan hanya salah satu: bulan order pertamanya = baru)
+    monthly = []
+    for m in months:
+        x = sel[sel["month"] == m]
+        per = x.groupby("ckey").agg(first_month=("first_month", "first"), bruto=("bruto", "sum"), n=("order_id", "nunique"))
+        new = per[per["first_month"] == m]
+        old = per[per["first_month"] != m]
+        rep = x[x["seq"] > 1]
+        monthly.append(dict(month=m, customers=int(len(per)), new=int(len(new)), returning=int(len(old)),
+                            returning_pct=round(100 * len(old) / len(per), 1) if len(per) else 0.0,
+                            orders=int(x["order_id"].nunique()), repeat_orders=int(len(rep)),
+                            repeat_orders_pct=round(100 * len(rep) / x["order_id"].nunique(), 1) if len(x) else 0.0,
+                            bruto=float(x["bruto"].sum()), bruto_new=float(new["bruto"].sum()), bruto_returning=float(old["bruto"].sum())))
+
+    # distribusi jumlah order per pelanggan (sepanjang data) untuk pelanggan yang aktif di periode
+    per_all = sel.groupby("ckey").agg(n_total=("n_total", "first"), bruto=("bruto", "sum"))
+    dist = []
+    for label, lo, hi in ORDER_BUCKETS:
+        b = per_all[(per_all["n_total"] >= lo) & (per_all["n_total"] <= hi)]
+        dist.append(dict(bucket=label, customers=int(len(b)), customers_pct=round(100 * len(b) / len(per_all), 1) if len(per_all) else 0.0,
+                         bruto=float(b["bruto"].sum()), bruto_pct=round(100 * b["bruto"].sum() / per_all["bruto"].sum(), 1) if per_all["bruto"].sum() else 0.0))
+
+    # jarak order ulang (hari sejak order sebelumnya) untuk order ke-2 dst di periode
+    rep = sel[(sel["seq"] > 1) & sel["gap_days"].notna()]
+    gap = []
+    for label, lo, hi in GAP_BUCKETS:
+        b = rep[(rep["gap_days"] >= lo) & (rep["gap_days"] <= hi)]
+        gap.append(dict(bucket=label, orders=int(len(b)), orders_pct=round(100 * len(b) / len(rep), 1) if len(rep) else 0.0,
+                        bruto=float(b["bruto"].sum())))
+    second = od[od["seq"] == 2]["gap_days"].dropna()        # khusus jarak order ke-1 → ke-2 (sepanjang data)
+    gap_second = dict(n=int(len(second)), median=float(second.median()) if len(second) else None,
+                      p25=float(second.quantile(.25)) if len(second) else None, p75=float(second.quantile(.75)) if len(second) else None)
+
+    # retensi kohort: kohort = bulan order pertama; kolom k = % pelanggan kohort yang order lagi k bulan kemudian
+    cohorts = []
+    cohort_cols = 0
+    if months:
+        act = od[["ckey", "month", "first_month"]].drop_duplicates(["ckey", "month"])
+        act = act[act["month"].notna() & act["first_month"].notna()]
+        try:
+            pm = act["month"].map(lambda v: pd.Period(v, "M"))
+            pf = act["first_month"].map(lambda v: pd.Period(v, "M"))
+            act = act.assign(k=(pm - pf).map(lambda d: d.n))
+        except Exception:
+            act = act.assign(k=0)
+        last = pd.Period(months[-1], "M")
+        for cm in months:
+            c = act[act["first_month"] == cm]
+            size = int(c["ckey"].nunique())
+            if not size:
+                continue
+            kmax = min(11, (last - pd.Period(cm, "M")).n)
+            cohort_cols = max(cohort_cols, kmax + 1)
+            row = dict(cohort=cm, size=size, pct=[])
+            for k in range(kmax + 1):
+                n = int(c[c["k"] == k]["ckey"].nunique())
+                row["pct"].append(round(100 * n / size, 1))
+            cohorts.append(row)
+
+    # pelanggan teratas (aktif di periode): urut jumlah order sepanjang data lalu bruto periode
+    per_top = sel.groupby("ckey").agg(channel=("channel", "first"), buyer=("buyer", "first"), orders=("order_id", "nunique"),
+                                      n_total=("n_total", "first"), qty=("qty", "sum"), bruto=("bruto", "sum"),
+                                      first=("first_created", "first"), last=("last_created", "first"))
+    per_top = per_top[per_top["n_total"] >= 2].sort_values(["n_total", "bruto"], ascending=[False, False]).head(top)
+    top_rows = []
+    if len(per_top):
+        prods = od[od["ckey"].isin(per_top.index)].groupby("ckey")["product"].agg(lambda s: s.value_counts().index[0] if len(s) else "")
+        for key, r in per_top.iterrows():
+            span = (r["last"] - r["first"]).days if pd.notna(r["last"]) and pd.notna(r["first"]) else None
+            top_rows.append(dict(channel=CHANNEL_LABEL.get(r["channel"], r["channel"]), buyer=r["buyer"] or "(tanpa nama)",
+                                 orders=int(r["orders"]), orders_total=int(r["n_total"]), qty=float(r["qty"]), bruto=float(r["bruto"]),
+                                 first=str(r["first"])[:10], last=str(r["last"])[:10], span_days=span,
+                                 gap_avg=round(span / (r["n_total"] - 1), 1) if span is not None and r["n_total"] > 1 else None,
+                                 product=prods.get(key, "")))
+
+    empty.update(channels=channels, totals=totals, monthly=monthly, months=months, dist=dist, gap=gap, gap_second=gap_second,
+                 cohorts=cohorts, cohort_cols=cohort_cols, top=top_rows)
+    return empty
+
+
+def export_repeat_xlsx(toko, O, platform="all", m_from=None, m_to=None):
+    """Excel analisa pelanggan berulang: ringkasan per platform, per bulan, distribusi, kohort, dan SEMUA pelanggan berulang."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    R = repeat_customers(O, platform, m_from, m_to, top=10**9)
+    wb = Workbook()
+    bold = Font(bold=True)
+
+    def sheet(title, header, rows, first=False):
+        ws = wb.active if first else wb.create_sheet()
+        ws.title = title[:31]
+        ws.append(header)
+        for c in ws[1]:
+            c.font = bold
+        for r in rows:
+            ws.append(r)
+        ws.freeze_panes = "A2"
+        return ws
+
+    keys = ["label", "customers", "new_customers", "returning_customers", "repeat_customers", "repeat_pct", "orders", "repeat_orders",
+            "repeat_orders_pct", "bruto", "repeat_bruto", "repeat_bruto_pct", "orders_per_customer", "bruto_per_customer", "aov", "gap_median", "gap_avg"]
+    head = ["Platform", "Pelanggan aktif", "Pelanggan baru", "Pelanggan lama", "Pernah beli ≥2×", "% pernah beli ≥2×", "Order", "Order ulang",
+            "% order ulang", "Bruto", "Bruto order ulang", "% bruto order ulang", "Order/pelanggan", "Bruto/pelanggan", "Rata-rata/order",
+            "Median jarak order (hari)", "Rata-rata jarak (hari)"]
+    rows = [[s.get(k) for k in keys] for s in R["channels"]] + ([[R["totals"].get(k) for k in keys]] if R["totals"] else [])
+    sheet("Per platform", head, rows, first=True)
+    sheet("Per bulan", ["Bulan", "Pelanggan aktif", "Baru", "Lama", "% lama", "Order", "Order ulang", "% order ulang", "Bruto", "Bruto baru", "Bruto lama"],
+          [[m["month"], m["customers"], m["new"], m["returning"], m["returning_pct"], m["orders"], m["repeat_orders"], m["repeat_orders_pct"],
+            m["bruto"], m["bruto_new"], m["bruto_returning"]] for m in R["monthly"]])
+    sheet("Distribusi order", ["Jumlah order (sepanjang data)", "Pelanggan", "% pelanggan", "Bruto periode", "% bruto"],
+          [[d["bucket"], d["customers"], d["customers_pct"], d["bruto"], d["bruto_pct"]] for d in R["dist"]])
+    sheet("Jarak order ulang", ["Jarak sejak order sebelumnya", "Order ulang", "% order ulang", "Bruto"],
+          [[g["bucket"], g["orders"], g["orders_pct"], g["bruto"]] for g in R["gap"]])
+    sheet("Kohort retensi %", ["Kohort (bulan order pertama)", "Pelanggan"] + [f"+{k} bln" for k in range(R["cohort_cols"])],
+          [[c["cohort"], c["size"]] + c["pct"] for c in R["cohorts"]])
+    sheet("Pelanggan berulang", ["Platform", "Pelanggan", "Order di periode", "Order sepanjang data", "Qty", "Bruto periode", "Order pertama",
+                                 "Order terakhir", "Rentang (hari)", "Rata-rata jarak (hari)", "Produk paling sering"],
+          [[t["channel"], t["buyer"], t["orders"], t["orders_total"], t["qty"], t["bruto"], t["first"], t["last"], t["span_days"], t["gap_avg"], t["product"]]
+           for t in R["top"]])
+    return wb
