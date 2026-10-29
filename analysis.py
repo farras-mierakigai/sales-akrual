@@ -704,6 +704,9 @@ def _repeat_stats(x, lo):
 
 HABIT_CATS = [("new", "Produk baru"), ("variant", "Warna/varian baru, produk sama"), ("same", "Item sama persis")]
 SEQ_BUCKETS = [("ke-2", 2, 2), ("ke-3", 3, 3), ("ke-4–5", 4, 5), ("ke-6+", 6, 10**9)]
+LAUNCH_QUIET_MONTHS = 3     # produk dianggap baru bila tidak ada penjualan di 1–3 bulan sebelumnya
+LAUNCH_MIN_ORDERS = 3       # minimal order di bulan rilis supaya tidak menghitung produk sporadis
+LAUNCH_WINDOW = 3           # pembeli dihitung di bulan rilis + 2 bulan berikutnya
 
 
 def _norm_key(s):
@@ -758,7 +761,8 @@ def repeat_habits(O, od, sel, top=20):
     terbaca sebagai produk baru. Riwayat dihitung dari semua data; laporan dibatasi order ulang yang ada di `sel` (periode).
     Mengembalikan juga `by_ckey` (kebiasaan per pelanggan sepanjang data) untuk daftar pelanggan teratas.
     """
-    empty = dict(channels=[], totals=None, seq=[], products=[], new_products=[], pairs=[], has_variation=False, by_ckey={})
+    empty = dict(channels=[], totals=None, seq=[], products=[], new_products=[], pairs=[], has_variation=False, by_ckey={},
+                 launches=dict(items=[], channels=[], totals=None))
     sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])]
     if not len(sold) or not len(od):
         return empty
@@ -854,8 +858,78 @@ def repeat_habits(O, od, sel, top=20):
     new_products = prod_table(LN, ["new"])
     pr = sorted(pairs.items(), key=lambda kv: -len(kv[1]))[:top]
     pair_rows = [dict(channel=CHANNEL_LABEL.get(ch, ch), src=labels.get((ch, a), a), dst=labels.get((ch, b), b), customers=len(cs)) for (ch, a, b), cs in pr]
-    empty.update(channels=channels, totals=totals, seq=seq, products=products, new_products=new_products, pairs=pair_rows)
+    empty.update(channels=channels, totals=totals, seq=seq, products=products, new_products=new_products, pairs=pair_rows,
+                 launches=product_launches(sold, L, sel))
     return empty
+
+
+def product_launches(sold, L, sel):
+    """Produk baru diluncurkan & siapa pembelinya (orang baru vs pelanggan lama).
+
+    Produk (nama dari `product_names`) dianggap BARU di bulan M bila ada penjualan di M, tidak ada penjualan di M-1..M-3,
+    data channel itu sudah mencakup M-1, dan order di M ≥ LAUNCH_MIN_ORDERS (semua order terjual, termasuk tanpa identitas).
+    Pembeli dihitung dari pelanggan teridentifikasi di bulan rilis + 2 bulan berikutnya (dibatasi periode): tiap pelanggan
+    sekali, status = order pertamanya membeli produk itu → "baru" bila itu order pertamanya di toko (seq 1), selain itu "lama".
+    Hanya rilis yang bulannya masuk periode terpilih yang ditampilkan.
+    """
+    out = dict(items=[], channels=[], totals=None)
+    if not len(sold) or not len(sel):
+        return out
+    PM = pd.DataFrame(dict(channel=sold["channel"].values, pkey=_norm_key(product_names(sold["product"])).values,
+                           month=sold["month"].values, order_id=sold["order_id"].values))
+    PM = PM[PM["month"].notna() & (PM["month"].astype(str) != "") & (PM["month"].astype(str) != "NaT")]
+    if not len(PM):
+        return out
+    PM["month"] = PM["month"].astype(str)
+    ch_start = PM.groupby("channel")["month"].min().to_dict()
+    cnt = PM.groupby(["channel", "pkey", "month"])["order_id"].nunique()
+    sel_months = sorted(set(sel["month"].dropna().astype(str)))
+    if not sel_months:
+        return out
+    lo, hi = sel_months[0], sel_months[-1]
+    labels = {k: v for k, v in zip(zip(L["channel"], L["pkey"]), L["product"])}
+
+    launches = []
+    for (ch, pk), g in cnt.groupby(level=[0, 1]):
+        months = {m: int(n) for (_, _, m), n in g.items()}
+        start = pd.Period(ch_start[ch], "M")
+        for m in sorted(months):
+            P = pd.Period(m, "M")
+            if P <= start or m < lo or m > hi or months[m] < LAUNCH_MIN_ORDERS:
+                continue
+            if any(str(P - k) in months for k in range(1, LAUNCH_QUIET_MONTHS + 1)):
+                continue
+            launches.append((ch, pk, m, [str(P + k) for k in range(LAUNCH_WINDOW) if str(P + k) <= hi]))
+    if not launches:
+        return out
+
+    items = []
+    for ch, pk, m, window in launches:
+        x = L[(L["channel"] == ch) & (L["pkey"] == pk) & (L["month"].astype(str).isin(window))]
+        if not len(x):
+            items.append(dict(channel=ch, label=CHANNEL_LABEL.get(ch, ch), product=labels.get((ch, pk), pk), month=m,
+                              buyers=0, new=0, old=0, new_pct=0.0, old_pct=0.0, orders=0, bruto=0.0))
+            continue
+        first = x.sort_values("seq").drop_duplicates("ckey")
+        new = int((first["seq"] == 1).sum())
+        buyers = int(len(first))
+        items.append(dict(channel=ch, label=CHANNEL_LABEL.get(ch, ch), product=labels.get((ch, pk), pk), month=m, buyers=buyers,
+                          new=new, old=buyers - new, new_pct=round(100 * new / buyers, 1) if buyers else 0.0,
+                          old_pct=round(100 * (buyers - new) / buyers, 1) if buyers else 0.0,
+                          orders=int(x["order_id"].nunique()), bruto=float(x["bruto"].sum())))
+    items.sort(key=lambda r: (r["month"], -r["buyers"]))
+    items.reverse()
+
+    def agg(rows, key):
+        b = sum(r["buyers"] for r in rows)
+        n = sum(r["new"] for r in rows)
+        return dict(key, launches=len(rows), buyers=b, new=n, old=b - n, new_pct=round(100 * n / b, 1) if b else 0.0,
+                    old_pct=round(100 * (b - n) / b, 1) if b else 0.0, orders=sum(r["orders"] for r in rows), bruto=sum(r["bruto"] for r in rows))
+
+    channels = [agg([r for r in items if r["channel"] == ch], dict(channel=ch, label=CHANNEL_LABEL.get(ch, ch)))
+                for ch in (SHOPEE, TIKTOK, TOKOPEDIA) if any(r["channel"] == ch for r in items)]
+    out.update(items=items, channels=channels, totals=agg(items, dict(channel="all", label="Gabungan")))
+    return out
 
 
 def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
@@ -1048,6 +1122,12 @@ def export_repeat_xlsx(toko, O, platform="all", m_from=None, m_to=None):
           [[p["channel"], p["product"], p["customers"], p["lines"], p["qty"], p["bruto"]] for p in H.get("new_products", [])])
     sheet("Lanjut beli", ["Platform", "Pernah beli", "Lalu beli (produk baru)", "Pelanggan"],
           [[p["channel"], p["src"], p["dst"], p["customers"]] for p in H.get("pairs", [])])
+    LA = H.get("launches") or {}
+    lk = ["launches", "buyers", "new", "new_pct", "old", "old_pct", "orders", "bruto"]
+    sheet("Produk baru rilis", ["Platform / produk", "Bulan rilis", "Produk baru", "Pembeli", "Orang baru", "% orang baru", "Pelanggan lama", "% pelanggan lama", "Order", "Bruto"],
+          [[c["label"], ""] + [c.get(k) for k in lk] for c in LA.get("channels", [])]
+          + ([[LA["totals"]["label"], ""] + [LA["totals"].get(k) for k in lk]] if LA.get("totals") else [])
+          + [[f'{r["label"]}: {r["product"]}', r["month"], 1, r["buyers"], r["new"], r["new_pct"], r["old"], r["old_pct"], r["orders"], r["bruto"]] for r in LA.get("items", [])])
     hab = lambda h: "" if not h else f'{h["new"]} produk baru · {h["variant"]} warna/varian baru · {h["same"]} item sama'
     sheet("Pelanggan berulang", ["Platform", "Pelanggan", "Order di periode", "Order sepanjang data", "Qty", "Bruto periode", "Order pertama",
                                  "Order terakhir", "Rentang (hari)", "Rata-rata jarak (hari)", "Produk paling sering", "Kebiasaan order ulang"],

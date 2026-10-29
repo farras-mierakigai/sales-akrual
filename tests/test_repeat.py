@@ -148,6 +148,31 @@ def test_repeat_habits_new_product_vs_new_variant():
     assert H2["products"][0]["product"] in ("Kemeja", "Rok")
 
 
+def test_product_launches_new_vs_old_buyers():
+    def ln(oid, created, buyer, product, ch=parsers.SHOPEE, bruto=100.0):
+        return dict(platform=parsers.SHOPEE, channel=ch, order_id=oid, created=pd.Timestamp(created), month=created[:7], status="x",
+                    is_batal=False, is_unpaid=False, is_retur=False, product=product, variation="", qty=1.0, bruto=bruto,
+                    buyer=buyer, buyer_key=buyer.lower())
+    O = pd.DataFrame([
+        ln("A1", "2026-01-03", "ani", "Kemeja"), ln("B1", "2026-01-10", "budi", "Kemeja"), ln("C1", "2026-02-10", "citra", "Kemeja"),
+        # "Celana" rilis Maret (tidak ada penjualan Jan–Feb): ani & budi = pelanggan lama, dewi & eko = orang baru; eko beli lagi April
+        ln("A2", "2026-03-02", "ani", "Celana"), ln("B2", "2026-03-05", "budi", "Celana"), ln("D1", "2026-03-06", "dewi", "Celana"),
+        ln("E1", "2026-04-01", "eko", "Celana"), ln("E2", "2026-04-20", "eko", "Celana"),
+        # "Rok" hanya 1 order di bulan pertamanya → di bawah ambang, bukan rilis; "Kemeja" ada sejak bulan pertama data → bukan rilis
+        ln("F1", "2026-04-03", "fani", "Rok"),
+    ])
+    LA = analysis.repeat_customers(O)["habits"]["launches"]
+    assert [r["product"] for r in LA["items"]] == ["Celana"] and LA["items"][0]["month"] == "2026-03"
+    r = LA["items"][0]
+    assert r["buyers"] == 4 and r["new"] == 2 and r["old"] == 2 and r["new_pct"] == 50.0 and r["orders"] == 5
+    assert LA["totals"]["launches"] == 1 and LA["totals"]["buyers"] == 4 and LA["channels"][0]["label"] == "Shopee"
+    # periode April saja: rilis Maret tidak masuk periode → kosong
+    assert analysis.repeat_customers(O, m_from="2026-04", m_to="2026-04")["habits"]["launches"]["items"] == []
+    # periode Maret saja: jendela pembeli dibatasi Maret → 3 pembeli (eko belum)
+    r = analysis.repeat_customers(O, m_from="2026-03", m_to="2026-03")["habits"]["launches"]["items"][0]
+    assert r["buyers"] == 3 and r["new"] == 1
+
+
 def test_api_repeat_and_reparse_old_uploads():
     c = farras()
     assert c.post("/api/toko", json=dict(name=TOKO)).status_code == 200

@@ -234,6 +234,11 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
         <div class="card"><h2>Produk baru yang dibeli pelanggan lama</h2><div class="desc">Produk yang dibeli di order ulang (periode) padahal belum pernah dibeli pelanggan itu — kandidat produk "pintu kedua".</div><div class="tblwrap" style="max-height:50vh"><table id="tblRepHabNew"></table></div></div>
       </div>
       <div class="card"><h2>Sudah beli apa, lalu beli apa</h2><div class="desc">Pasangan produk: pelanggan yang pernah membeli produk kiri, lalu di order ulangnya (periode) membeli produk kanan untuk pertama kali. Satu pelanggan dihitung sekali per pasangan, urut jumlah pelanggan.</div><div class="tblwrap" style="max-height:50vh"><table id="tblRepHabPair"></table></div></div>
+      <div class="card"><h2>Produk baru dirilis: siapa yang membeli?</h2><div class="desc"><b>Produk baru</b> = produk yang mulai terjual di suatu bulan padahal tidak ada penjualan sama sekali di 1–3 bulan sebelumnya (data harus sudah mencakup bulan sebelumnya; minimal 3 order di bulan rilis supaya produk sporadis tidak ikut). Pembelinya dihitung di bulan rilis + 2 bulan berikutnya (dibatasi periode), satu pelanggan sekali: <b>orang baru</b> = pembelian itu adalah order pertamanya di toko; <b>pelanggan lama</b> = sudah pernah order sebelumnya. Hanya rilis yang bulannya masuk periode terpilih. Nama produk dikelompokkan dari judul listing seperti di atas.</div>
+        <div class="tiles" id="repLaunchTiles"></div>
+        <div class="tblwrap" style="margin-bottom:12px"><table id="tblRepLaunchPlat"></table></div>
+        <div class="tblwrap" style="max-height:60vh"><table id="tblRepLaunch"></table></div>
+      </div>
       <div class="card"><h2>Retensi kohort</h2><div class="desc">Kohort = bulan order pertama pelanggan. Kolom <b>+k</b> = % pelanggan kohort itu yang order lagi k bulan kemudian (+0 selalu 100%). Warna makin pekat = makin banyak yang kembali.</div><div class="tblwrap"><table id="tblRepCohort"></table></div></div>
       <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Pelanggan berulang teratas</h2><div class="desc">50 pelanggan dengan order terbanyak (sepanjang data) yang aktif di periode. Shopee = username; TikTok/Tokopedia menyamarkan nama pembeli, dicocokkan dari pola nama + nomor HP tersamar (bisa sedikit meleset). Daftar lengkap ada di Excel.</div></div><input type="text" id="repSearch" placeholder="🔍 cari pelanggan / produk…" style="min-width:240px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblRepTop"></table></div></div>
     </div>
@@ -796,6 +801,7 @@ function renderRepeat(){
   const heat=v=>{ if(v==null) return ''; const a=Math.min(1,v/40); return `background:rgba(94,26,241,${(0.08+0.6*a).toFixed(2)});color:${a>0.55?'#fff':'#1E1E1E'}` };
   $('#tblRepCohort').innerHTML='<tr><th class="l">Kohort</th><th>Pelanggan</th>'+Array.from({length:K},(_,k)=>`<th>+${k}</th>`).join('')+'</tr>'+(C.length?C.map(c=>`<tr><td class="l">${monthLabel(c.cohort)}</td><td>${fmt(c.size)}</td>`+Array.from({length:K},(_,k)=>k<c.pct.length?`<td style="${k?heat(c.pct[k]):''}">${pct(c.pct[k])}</td>`:'<td class="muted">–</td>').join('')+'</tr>').join(''):'<tr><td class="muted">belum cukup bulan</td></tr>');
   renderRepHabits();
+  renderRepLaunch();
   renderRepTop();
 }
 const HAB=[['new','Produk baru','#F4561E'],['variant','Warna/varian baru, produk sama','#5E1AF1'],['same','Item sama persis','#9CA3AF']];
@@ -820,6 +826,22 @@ function renderRepHabits(){
   $('#tblRepHabNew').innerHTML='<tr><th class="l">Platform</th><th class="l">Produk</th><th>Pelanggan</th><th>Item</th><th>Bruto</th></tr>'+(N.length?N.map(p=>`<tr><td class="l">${p.channel}</td>${ell(p.product)}<td>${fmt(p.customers)}</td><td>${fmt(p.lines)}</td><td>${fmt(p.bruto)}</td></tr>`).join(''):'<tr><td class="muted" colspan="5">belum ada</td></tr>');
   const Q=H.pairs||[];
   $('#tblRepHabPair').innerHTML='<tr><th class="l">Platform</th><th class="l">Pernah beli</th><th class="l">Lalu beli (produk baru)</th><th>Pelanggan</th></tr>'+(Q.length?Q.map(p=>`<tr><td class="l">${p.channel}</td>${ell(p.src,320)}${ell(p.dst,320)}<td>${fmt(p.customers)}</td></tr>`).join(''):'<tr><td class="muted" colspan="4">belum ada pelanggan lama yang membeli produk baru di periode ini</td></tr>');
+}
+function renderRepLaunch(){
+  const LA=(REP.habits&&REP.habits.launches)||{}; const T=LA.totals;
+  if(!T){ $('#repLaunchTiles').innerHTML=''; $('#tblRepLaunchPlat').innerHTML=''; $('#tblRepLaunch').innerHTML='<tr><td class="muted">tidak ada produk baru dirilis di periode ini (atau data belum mencakup bulan sebelumnya)</td></tr>'; return; }
+  $('#repLaunchTiles').innerHTML=[
+    ['Produk baru dirilis', fmt(T.launches), 'bulan rilis di periode · '+fmt(T.orders)+' order · bruto '+fmtJt(T.bruto)],
+    ['Pembeli produk baru', fmt(T.buyers), 'pelanggan unik, 3 bulan pertama tiap produk'],
+    ['Orang baru', pct(T.new_pct), fmt(T.new)+' pembeli yang order pertamanya di toko adalah produk baru ini'],
+    ['Pelanggan lama', pct(T.old_pct), fmt(T.old)+' pembeli yang sudah pernah order sebelumnya'],
+  ].map(t=>`<div class="tile"><div class="k">${t[0]}</div><div class="v">${t[1]}</div><div class="s">${t[2]}</div></div>`).join('');
+  const pillOf=l=>{const k=l.split(' ')[0]; const c=COL[k]||'#8A8A99'; return `<i class="pill" style="background:${c}22;color:${c}">${l}</i>`};
+  const rowOf=(s,tot)=>`<tr class="${tot?'tot':''}"><td class="l">${tot?s.label:pillOf(s.label)}</td><td>${fmt(s.launches)}</td><td>${fmt(s.buyers)}</td><td>${fmt(s.new)}</td><td>${pct(s.new_pct)}</td><td>${fmt(s.old)}</td><td>${pct(s.old_pct)}</td><td>${fmt(s.orders)}</td><td>${fmt(s.bruto)}</td></tr>`;
+  $('#tblRepLaunchPlat').innerHTML='<tr><th class="l">Platform</th><th>Produk baru</th><th>Pembeli</th><th>Orang baru</th><th>%</th><th>Pelanggan lama</th><th>%</th><th>Order</th><th>Bruto</th></tr>'+(LA.channels||[]).map(s=>rowOf(s,false)).join('')+((LA.channels||[]).length>1?rowOf(T,true):'');
+  const bar=r=>`<td style="min-width:120px"><div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:#EEE"><div style="width:${r.new_pct}%;background:#F4561E"></div><div style="width:${r.old_pct}%;background:#5E1AF1"></div></div></td>`;
+  $('#tblRepLaunch').innerHTML='<tr><th class="l">Bulan rilis</th><th class="l">Platform</th><th class="l">Produk</th><th>Pembeli</th><th>Orang baru</th><th>%</th><th>Pelanggan lama</th><th>%</th><th title="oranye = orang baru, ungu = pelanggan lama">Komposisi</th><th>Order</th><th>Bruto</th></tr>'
+    +(LA.items||[]).map(r=>`<tr><td class="l">${monthLabel(r.month)}</td><td class="l">${r.label}</td>${ell(r.product,300)}<td>${fmt(r.buyers)}</td><td>${fmt(r.new)}</td><td>${pct(r.new_pct)}</td><td>${fmt(r.old)}</td><td>${pct(r.old_pct)}</td>${bar(r)}<td>${fmt(r.orders)}</td><td>${fmt(r.bruto)}</td></tr>`).join('');
 }
 const habTxt=h=>!h?'–':`<span style="color:#F4561E">${h.new}</span> / <span style="color:#5E1AF1">${h.variant}</span> / <span style="color:#6B7280">${h.same}</span>`;
 function renderRepTop(){
