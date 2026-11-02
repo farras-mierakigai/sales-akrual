@@ -218,13 +218,16 @@ def monthly(O, I, platform="all", m_from=None, m_to=None, U=None, ads=None, d_fr
             other_lines += [(k, l) for k, l in OTHER_LINES[p] if (k, l) not in other_lines]
 
     # rasio neto/bruto-settle per (platform, bulan) → dasar taksiran order yang belum cair
+    # (tanpa order yang dananya dikembalikan penuh: harga produknya masih tercantum di laporan tapi neto & biaya 0,
+    #  kalau ikut dihitung rasio dan % potongan jadi terlalu rendah — temuan Farras 2026-11-02, TikTok 9,5% vs hitung manual 12,5%)
     ratio_pm, ratio_p = {}, {}
     if len(I):
-        g = I.groupby(["platform", "month"]).agg(n=("neto", "sum"), h=("harga_produk", "sum"), c=("order_id", "nunique"))
+        I_ok = I[~I["is_retur"]] if "is_retur" in I else I
+        g = I_ok.groupby(["platform", "month"]).agg(n=("neto", "sum"), h=("harga_produk", "sum"), c=("order_id", "nunique"))
         for (pl, mo), x in g.iterrows():
             if x["h"] > 0 and x["c"] >= 30:
                 ratio_pm[(pl, mo)] = x["n"] / x["h"]
-        gp = I.groupby("platform").agg(n=("neto", "sum"), h=("harga_produk", "sum"))
+        gp = I_ok.groupby("platform").agg(n=("neto", "sum"), h=("harga_produk", "sum"))
         for pl, x in gp.iterrows():
             if x["h"] > 0:
                 ratio_p[pl] = x["n"] / x["h"]
@@ -273,16 +276,19 @@ def monthly(O, I, platform="all", m_from=None, m_to=None, U=None, ads=None, d_fr
                 r[k] = float(i[k].sum()) if k in i else 0.0
             r["total_potongan"] = float(sum(r[k] for k, _ in fee_lines))
             r["neto"] = float(i["neto"].sum())
-            r["bruto_income"] = float(i["harga_produk"].sum())
-            r["order_settled"] = int(i["order_id"].nunique())
+            ok = i[~i["is_retur"]] if "is_retur" in i else i      # basis %: hanya order yang dananya tidak dikembalikan penuh
+            r["bruto_income"] = float(ok["harga_produk"].sum())
+            r["bruto_refund"] = float(i["harga_produk"].sum() - r["bruto_income"])
+            r["order_settled"] = int(ok["order_id"].nunique())
+            r["order_refund"] = int(i["order_id"].nunique() - r["order_settled"])
             settled_ids = set(i["order_id"])
         else:
             r["refund"] = 0.0
             r["refund_retur"] = 0.0
             for k, _ in fee_lines + other_lines:
                 r[k] = 0.0
-            r["total_potongan"] = r["neto"] = r["bruto_income"] = 0.0
-            r["order_settled"] = 0
+            r["total_potongan"] = r["neto"] = r["bruto_income"] = r["bruto_refund"] = 0.0
+            r["order_settled"] = r["order_refund"] = 0
             settled_ids = set()
         # cakupan: order terjual yang belum muncul di laporan penghasilan
         if len(o):
@@ -384,6 +390,8 @@ def unsettled_by_status(O, I, platform="all", m_from=None, m_to=None, U=None):
         I = I.copy()
         om = O.drop_duplicates("order_id").set_index("order_id")["month"]
         I["month"] = I["order_id"].map(om).fillna(I["created"].dt.strftime("%Y-%m"))
+        if "is_retur" in I:
+            I = I[~I["is_retur"]]      # rasio neto/bruto tanpa order refund penuh (neto 0, harga produk masih tercantum)
         gp = I.groupby("platform").agg(n=("neto", "sum"), h=("harga_produk", "sum"))
         ratio_p = {pl: (x["n"] / x["h"] if x["h"] > 0 else 0.0) for pl, x in gp.iterrows()}
         g = I.groupby(["platform", "month"]).agg(n=("neto", "sum"), h=("harga_produk", "sum"), c=("order_id", "nunique"))

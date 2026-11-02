@@ -372,7 +372,8 @@ _TT_MAP = {
     "neto": ["Jumlah penyelesaian pembayaran", "Total settlement amount"],
     "revenue": ["Total Pendapatan", "Total Revenue"],
     "harga_produk": ["Subtotal setelah diskon penjual", "Subtotal after seller discounts"],
-    "refund": ["Subtotal pengembalian dana setelah diskon penjual", "Refund subtotal after seller discounts"],
+    "refund": ["Subtotal pengembalian dana setelah diskon penjual", "Refund subtotal after seller discounts",
+               "Total pengembalian dana setelah diskon", "Total refund after discounts"],   # nama baru sejak export Okt 2026
     "total_fees": ["Total Biaya", "Total Fees", "Total fees"],
     "komisi_platform": ["Biaya komisi platform", "Platform commission fee", "TikTok Shop commission fee"],
     "komisi_dinamis": ["Komisi dinamis", "Dynamic commission", "Dynamic Commission"],
@@ -507,6 +508,7 @@ TIKTOK_SUMMARY_MAP = {
     "Jumlah penyelesaian pembayaran": "settlement_total", "Total settlement amount": "settlement_total",
     "Subtotal setelah diskon penjual": "harga_produk", "Subtotal after seller discounts": "harga_produk",
     "Subtotal pengembalian dana setelah diskon penjual": "refund", "Refund subtotal after seller discounts": "refund",
+    "Total pengembalian dana setelah diskon": "refund", "Total refund after discounts": "refund",
     "Total Biaya": "total_fees", "Total Fees": "total_fees", "Total fees": "total_fees",
     "Biaya komisi platform": "komisi_platform", "Platform commission fee": "komisi_platform", "TikTok Shop commission fee": "komisi_platform",
     "Komisi dinamis": "komisi_dinamis", "Dynamic commission": "komisi_dinamis", "Dynamic Commission": "komisi_dinamis",
@@ -558,7 +560,7 @@ def tiktok_income_summary(wb):
 
 # ---------------------------------------------------------------- entry point + cache
 
-PARSER_VERSION = "11"
+PARSER_VERSION = "12"   # 12: alias kolom refund TikTok format Okt 2026
 
 KINDS = {
     "shopee_orders": "Shopee · Order.all",

@@ -1219,7 +1219,7 @@ def _cli(argv):
     """python3 app.py adduser <nama> [--admin] | passwd <nama> | users | export-arsip (tulis hpp/ads JSON ke folder arsip)
     | mail-dns (record DNS pengirim email: DKIM/SPF/DMARC) | mail-test <email> (kirim email percobaan)
     | tiket (daftar tiket) | tiket <id> (isi tiket + path lampiran) | tiket-balas <id> <teks> (balas sebagai Tim Sales Akrual)
-    | tiket-status <id> open|answered|closed | reingest [toko] (parse ulang file pesanan lama agar kolom pembeli terisi, semua workspace)"""
+    | tiket-status <id> open|answered|closed | reingest [toko] (parse ulang file yang diproses parser lama: kolom pembeli, kolom refund TikTok; semua workspace)"""
     import getpass
     cmd = argv[0]
     if cmd == "reingest":
@@ -1229,10 +1229,10 @@ def _cli(argv):
             for t in db.list_toko():
                 if only and t != only:
                     continue
-                need = db.uploads_needing_buyer(t)
+                need = db.uploads_needing_reparse(t)
                 if not need:
                     continue
-                done, missing = db.reingest_old_orders(t)
+                done, missing = db.reingest_outdated(t)
                 print(f"[ws {ws['id']} {ws['name']}] {t}: {done} file diparse ulang" + (f", arsip tidak ada: {missing}" if missing else ""))
         return
     if cmd == "tiket":

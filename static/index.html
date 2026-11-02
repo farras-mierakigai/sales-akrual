@@ -630,7 +630,7 @@ function render(){
     ['Pembatalan', fmtRp(T.nilai_batal), fmt(T.pesanan_batal)+' order · '+pct(T.batal_pct)+' dari masuk'],
     ['Retur penuh (keluar dari bruto)', fmtRp(T.retur_nilai||0), fmt(T.retur_order||0)+' order dana dikembalikan penuh'],
     ['Peredaran bruto riil', fmtRp(T.bruto), fmt(T.pesanan_terjual)+' order non-batal non-retur · '+fmt(T.qty_terjual)+' pcs'],
-    ['Potongan marketplace', fmtRp(-T.total_potongan), pct(T.potongan_pct)+' dari bruto settle '+fmtJt(T.bruto_income)+' ('+fmt(T.order_settled)+' order yang sudah ada di lap. penghasilan)'],
+    ['Potongan marketplace', fmtRp(-T.total_potongan), pct(T.potongan_pct)+' dari bruto settle '+fmtJt(T.bruto_income)+' ('+fmt(T.order_settled)+' order cair; '+fmt(T.order_refund)+' order refund penuh senilai '+fmtJt(T.bruto_refund)+' tidak masuk basis)'],
     ['Refund parsial', fmtRp(-T.refund), 'order yang tetap diakui; retur penuh sudah keluar dari bruto'],
     ['Dana diterima (neto)', fmtRp(T.neto), pct(T.neto_pct)+' dari bruto yang sudah settle'],
     ['Taksiran dana akan cair', fmtRp(T.est_neto||0), fmt(T.belum_settle_order||0)+' order belum settle · bruto '+fmtJt(T.belum_settle_bruto||0)+(T.est_resmi_order?' · '+fmt(T.est_resmi_order)+' pakai estimasi resmi TikTok':'')],
@@ -657,7 +657,7 @@ function render(){
   mkChart('chBatal',{type:'line',data:{labels,datasets:[{label:'% batal',data:R.map(r=>r.batal_pct),borderColor:COL.Shopee,backgroundColor:COL.Shopee,borderWidth:2,pointRadius:4,tension:.25}]},options:baseOpts('pct')});
   // fee table
   const fl=DATA.fee_lines; const totFee=-T.total_potongan||1;
-  $('#tblFee').innerHTML='<tr><th class="l">Jenis potongan</th><th>Rp</th><th>% dari total potongan</th><th>% dari bruto settle</th></tr>'+fl.map(([k,l])=>`<tr><td class="l">${l}</td><td>${fmt(-T[k])}</td><td>${pct(-T[k]/totFee*100)}</td><td>${pct(-T[k]/(T.bruto_income||1)*100)}</td></tr>`).join('')+`<tr class="tot"><td class="l">Total potongan</td><td>${fmt(-T.total_potongan)}</td><td>100%</td><td>${pct(T.potongan_pct)}</td></tr><tr><td class="l">Refund parsial ke pembeli</td><td>${fmt(-T.refund)}</td><td></td><td>${pct(-T.refund/(T.bruto_income||1)*100)}</td></tr>`+(DATA.other_lines||[]).map(([k,l])=>`<tr><td class="l">${l}</td><td>${fmt(T[k])}</td><td></td><td>${pct(T[k]/(T.bruto_income||1)*100)}</td></tr>`).join('')+`<tr class="dim"><td class="l">Bruto settle (basis %)</td><td>${fmt(T.bruto_income)}</td><td></td><td>100%</td></tr>`;
+  $('#tblFee').innerHTML='<tr><th class="l">Jenis potongan</th><th>Rp</th><th>% dari total potongan</th><th>% dari bruto settle</th></tr>'+fl.map(([k,l])=>`<tr><td class="l">${l}</td><td>${fmt(-T[k])}</td><td>${pct(-T[k]/totFee*100)}</td><td>${pct(-T[k]/(T.bruto_income||1)*100)}</td></tr>`).join('')+`<tr class="tot"><td class="l">Total potongan</td><td>${fmt(-T.total_potongan)}</td><td>100%</td><td>${pct(T.potongan_pct)}</td></tr><tr><td class="l">Refund parsial ke pembeli</td><td>${fmt(-T.refund)}</td><td></td><td>${pct(-T.refund/(T.bruto_income||1)*100)}</td></tr>`+(DATA.other_lines||[]).map(([k,l])=>`<tr><td class="l">${l}</td><td>${fmt(T[k])}</td><td></td><td>${pct(T[k]/(T.bruto_income||1)*100)}</td></tr>`).join('')+`<tr class="dim"><td class="l">Bruto settle (basis %) — harga produk order yang dananya tidak dikembalikan penuh</td><td>${fmt(T.bruto_income)}</td><td></td><td>100%</td></tr><tr class="dim"><td class="l">Order refund penuh di lap. penghasilan (neto & biaya 0) — tidak masuk basis</td><td>${fmt(T.bruto_refund)}</td><td></td><td></td></tr>`;
   // grafik potongan per bulan per jenis (top 5 + lainnya)
   const FEECOL=['#F4561E','#5E1AF1','#0F766E','#B7791F','#C2185B','#8A8A99'];
   const ranked=fl.map(([k,l])=>({k,l,v:-T[k]||0})).sort((a,b)=>b.v-a.v);
@@ -712,7 +712,7 @@ function renderBulan(){
   for(const [k,l] of (DATA.other_lines||[])) h+=line(l+' (+/−)',k,{cls:'sub'});
   h+=line('DANA DITERIMA (NETO)','neto',{cls:'tot'});
   h+=sec('CAKUPAN LAPORAN PENGHASILAN');
-  h+=line('Bruto yang sudah settle (harga produk di lap. penghasilan)','bruto_income',{cls:'dim'});
+  h+=line('Bruto yang sudah settle (harga produk di lap. penghasilan, tanpa order refund penuh)','bruto_income',{cls:'dim'});
   h+=line('Order terjual belum muncul di lap. penghasilan','belum_settle_order',{cls:'dim'});
   h+=line('Nilai bruto belum settle','belum_settle_bruto',{cls:'dim'});
   h+=line('Settle %','settle_pct',{pct:1,cls:'dim'});

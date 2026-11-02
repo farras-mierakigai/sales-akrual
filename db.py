@@ -493,30 +493,42 @@ def ingest_file(name, path, uploaded_by=""):
 
 BUYER_PARSER = 11   # versi parser pertama yang menyimpan identitas pembeli
 
+# File yang diproses parser lebih lama dari versi ini perlu diparse ulang dari arsip: (jenis file, versi minimum, alasan)
+REPARSE_RULES = [
+    (("shopee_orders", "tiktok_orders"), BUYER_PARSER, "kolom pembeli"),
+    (("tiktok_income",), 12, "kolom refund format export TikTok baru (Okt 2026)"),
+]
 
-def uploads_needing_buyer(name):
-    """File pesanan di toko ini yang diproses parser lama (belum ada kolom pembeli) → [nama file]."""
+
+def uploads_needing_reparse(name, kinds=None):
+    """File di toko ini yang diproses parser lama menurut REPARSE_RULES → [nama file]. kinds = batasi jenis file."""
     with engine().connect() as cx:
         tid = toko_id(cx, name)
         if tid is None:
             return []
-        rows = cx.execute(select(upload.c.file, upload.c.parser_version).where(upload.c.toko_id == tid,
-                                                                               upload.c.kind.in_(("shopee_orders", "tiktok_orders")))).all()
+        rows = cx.execute(select(upload.c.file, upload.c.kind, upload.c.parser_version).where(upload.c.toko_id == tid)).all()
     out = []
-    for f, v in rows:
+    for f, k, v in rows:
+        if kinds is not None and k not in kinds:
+            continue
         try:
-            old = int(v or 0) < BUYER_PARSER
+            ver = int(v or 0)
         except ValueError:
-            old = True
-        if old:
+            ver = 0
+        if any(k in ks and ver < minv for ks, minv, _ in REPARSE_RULES):
             out.append(f)
     return out
 
 
-def reingest_old_orders(name):
-    """Parse ulang file pesanan lama dari arsip supaya kolom pembeli terisi. → (jumlah diproses, [file arsip tidak ada])."""
+def uploads_needing_buyer(name):
+    """File pesanan yang belum punya kolom pembeli (dipakai tab Pelanggan berulang)."""
+    return uploads_needing_reparse(name, kinds=("shopee_orders", "tiktok_orders"))
+
+
+def reingest_outdated(name, kinds=None):
+    """Parse ulang file lama dari arsip menurut REPARSE_RULES. → (jumlah diproses, [file arsip tidak ada])."""
     done, missing = 0, []
-    for f in uploads_needing_buyer(name):
+    for f in uploads_needing_reparse(name, kinds):
         path = os.path.join(archive_dir(name), f)
         if not os.path.isfile(path):
             missing.append(f)
@@ -524,6 +536,11 @@ def reingest_old_orders(name):
         ingest_file(name, path)
         done += 1
     return done, missing
+
+
+def reingest_old_orders(name):
+    """Kompat: parse ulang file pesanan lama saja (kolom pembeli)."""
+    return reingest_outdated(name, kinds=("shopee_orders", "tiktok_orders"))
 
 
 def delete_file(name, file):
