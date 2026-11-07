@@ -940,7 +940,7 @@ def product_launches(sold, L, sel):
     return out
 
 
-def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
+def repeat_customers(O, platform="all", m_from=None, m_to=None, top=None):
     """Analisa transaksi berulang per pelanggan & per platform.
 
     Basis = order TERJUAL (non-batal, non-retur, sudah bayar) dari file pesanan. Identitas pelanggan: Shopee = username pembeli;
@@ -1064,10 +1064,15 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=50):
     per_top = sel.groupby("ckey").agg(channel=("channel", "first"), buyer=("buyer", "first"), orders=("order_id", "nunique"),
                                       n_total=("n_total", "first"), qty=("qty", "sum"), bruto=("bruto", "sum"),
                                       first=("first_created", "first"), last=("last_created", "first"))
-    per_top = per_top[per_top["n_total"] >= 2].sort_values(["n_total", "bruto"], ascending=[False, False]).head(top)
+    per_top = per_top[per_top["n_total"] >= 2].sort_values(["n_total", "bruto"], ascending=[False, False])
+    if top:
+        per_top = per_top.head(top)
     top_rows = []
     if len(per_top):
-        prods = od[od["ckey"].isin(per_top.index)].groupby("ckey")["product"].agg(lambda s: s.value_counts().index[0] if len(s) else "")
+        # produk paling sering per pelanggan: hitung (ckey, produk) sekali, ambil yang terbanyak
+        pc = od[od["ckey"].isin(per_top.index)].groupby(["ckey", "product"]).size().reset_index(name="n")
+        pc = pc.sort_values(["ckey", "n"], ascending=[True, False]).drop_duplicates("ckey")
+        prods = pc.set_index("ckey")["product"]
         for key, r in per_top.iterrows():
             span = (r["last"] - r["first"]).days if pd.notna(r["last"]) and pd.notna(r["first"]) else None
             top_rows.append(dict(channel=CHANNEL_LABEL.get(r["channel"], r["channel"]), buyer=r["buyer"] or "(tanpa nama)",
@@ -1085,7 +1090,7 @@ def export_repeat_xlsx(toko, O, platform="all", m_from=None, m_to=None):
     """Excel analisa pelanggan berulang: ringkasan per platform, per bulan, distribusi, kohort, dan SEMUA pelanggan berulang."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
-    R = repeat_customers(O, platform, m_from, m_to, top=10**9)
+    R = repeat_customers(O, platform, m_from, m_to)
     wb = Workbook()
     bold = Font(bold=True)
 

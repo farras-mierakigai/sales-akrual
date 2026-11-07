@@ -244,7 +244,7 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
         <div class="tblwrap" style="max-height:60vh"><table id="tblRepLaunch"></table></div>
       </div>
       <div class="card"><h2>Retensi kohort</h2><div class="desc">Kohort = bulan order pertama pelanggan. Kolom <b>+k</b> = % pelanggan kohort itu yang order lagi k bulan kemudian (+0 selalu 100%). Warna makin pekat = makin banyak yang kembali.</div><div class="tblwrap"><table id="tblRepCohort"></table></div></div>
-      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Pelanggan berulang teratas</h2><div class="desc">50 pelanggan dengan order terbanyak (sepanjang data) yang aktif di periode. Shopee = username; TikTok/Tokopedia menyamarkan nama pembeli, dicocokkan dari pola nama + nomor HP tersamar (bisa sedikit meleset). Daftar lengkap ada di Excel.</div></div><input type="text" id="repSearch" placeholder="🔍 cari pelanggan / produk…" style="min-width:240px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblRepTop"></table></div></div>
+      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Pelanggan berulang</h2><div class="desc">Semua pelanggan yang order lebih dari sekali (sepanjang data) dan aktif di periode, diurutkan dari order terbanyak. Shopee = username; TikTok/Tokopedia menyamarkan nama pembeli, dicocokkan dari pola nama + nomor HP tersamar (bisa sedikit meleset).</div></div><input type="text" id="repSearch" placeholder="🔍 cari pelanggan / produk…" style="min-width:240px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblRepTop"></table></div></div>
     </div>
   </div>
 
@@ -932,7 +932,7 @@ function renderRepTop(){
   $('#tblRepTop').innerHTML='<tr><th class="l">Platform</th><th class="l">Pelanggan</th><th>Order di periode</th><th>Order sepanjang data</th><th>Qty</th><th>Bruto periode</th><th>Order pertama</th><th>Order terakhir</th><th>Rata-rata jarak (hari)</th><th class="l">Produk paling sering</th><th title="jumlah order ulang sepanjang data: produk baru / warna-varian baru / item sama">Order ulang: baru / warna / sama</th></tr>'+(rows.length?rows.map(t=>`<tr><td class="l">${t.channel}</td><td class="l">${t.buyer}</td><td>${fmt(t.orders)}</td><td>${fmt(t.orders_total)}</td><td>${fmt(t.qty)}</td><td>${fmt(t.bruto)}</td><td>${t.first}</td><td>${t.last}</td><td>${t.gap_avg==null?'–':fmt(t.gap_avg)}</td>${ell(t.product)}<td style="white-space:nowrap">${habTxt(t.habit)}</td></tr>`).join(''):'<tr><td class="muted" colspan="11">belum ada pelanggan yang order lebih dari sekali</td></tr>');
   dt('tblRepTop',{search:false});
 }
-$('#repSearch').oninput=()=>{ if(REP) renderRepTop(); };
+let repSearchT=null; $('#repSearch').oninput=()=>{ clearTimeout(repSearchT); repSearchT=setTimeout(()=>{ if(REP) renderRepTop(); },250); };
 $('#btnRepeatX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/repeat.xlsx?'+qs({platform:$('#platform').value}); };
 
 // ---------- wilayah pembeli (demografi)
