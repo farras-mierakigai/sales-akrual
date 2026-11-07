@@ -1176,15 +1176,15 @@ def _area_of(province, city):
 def _geo_orders(O):
     """Satu baris per ORDER terjual (non-batal, non-retur, sudah bayar) beserta provinsi, kota, dan pembeli."""
     sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])]
-    cols = ["channel", "order_id", "province", "city", "buyer_key", "created", "month", "bruto", "qty", "product"]
+    cols = ["channel", "order_id", "province", "city", "district", "buyer_key", "created", "month", "bruto", "qty", "product"]
     if not len(sold):
         return pd.DataFrame(columns=cols)
-    for c in ("province", "city", "buyer_key"):
+    for c in ("province", "city", "district", "buyer_key"):
         sold = sold.assign(**{c: sold[c].fillna("").astype(str) if c in sold else ""})
     # baris yang punya wilayah didahulukan supaya 'first' mengambil nilai yang terisi
     sold = sold.assign(_noprov=(sold["province"] == "")).sort_values("_noprov", kind="stable")
     od = sold.groupby(["channel", "order_id"], sort=False).agg(
-        province=("province", "first"), city=("city", "first"), buyer_key=("buyer_key", "first"), created=("created", "min"),
+        province=("province", "first"), city=("city", "first"), district=("district", "first"), buyer_key=("buyer_key", "first"), created=("created", "min"),
         month=("month", "first"), bruto=("bruto", "sum"), qty=("qty", "sum"), product=("product", "first")).reset_index()
     return od
 
@@ -1240,7 +1240,10 @@ def _geo_group(df, by, total_orders, total_bruto, label_col=None):
     return out
 
 
-def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60):
+GEO_TOP_DISTRICT = 100      # kecamatan teratas di tab (Excel memuat semua)
+
+
+def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60, top_district=GEO_TOP_DISTRICT):
     """Demografi wilayah pembeli: sebaran order/bruto/pelanggan per pulau, kawasan, provinsi, kota; tren bulanan; produk favorit per provinsi.
 
     Basis = order TERJUAL (non-batal, non-retur, sudah bayar) dari file pesanan, dibatasi periode. Wilayah = alamat pengiriman
@@ -1250,7 +1253,7 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60):
     tiap wilayah yang pernah ia pakai.
     """
     O = _channel_filter(O, platform)
-    empty = dict(totals=None, regions=[], areas=[], provinces=[], cities=[], months=[], monthly=[], monthly_provinces=[],
+    empty = dict(totals=None, regions=[], areas=[], provinces=[], cities=[], districts=[], months=[], monthly=[], monthly_provinces=[],
                  products=[], matrix=None, has_geo=False, no_geo=0, no_geo_bruto=0.0)
     if not len(O):
         return empty
@@ -1292,6 +1295,15 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60):
     cities = _geo_group(with_city, ["province", "city"], orders, bruto)
     totals["cities_total"] = len(cities)
     cities = cities[:top_city] if top_city else cities
+    # kecamatan: hanya order yang alamatnya memuat kecamatan (Shopee; TikTok menyamarkannya) → % dihitung terhadap order berkecamatan
+    with_dist = od[od["district"] != ""]
+    d_orders, d_bruto = int(with_dist["order_id"].nunique()), float(with_dist["bruto"].sum())
+    districts = _geo_group(with_dist, ["province", "city", "district"], d_orders, d_bruto)
+    totals.update(districts_total=len(districts), district_orders=d_orders, district_bruto=d_bruto,
+                  district_coverage_pct=round(100 * d_orders / orders, 1) if orders else 0.0,
+                  district_shopee_pct=round(100 * int(with_dist[with_dist["channel"] == SHOPEE]["order_id"].nunique())
+                                            / max(1, int(od[od["channel"] == SHOPEE]["order_id"].nunique())), 1))
+    districts = districts[:top_district] if top_district else districts
 
     # per bulan: order & bruto per provinsi teratas (+ Lainnya) → grafik komposisi
     months = sorted(m for m in od["month"].dropna().unique() if m and m != "NaT")
@@ -1337,8 +1349,8 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60):
             rows.append(dict(product=name, orders=int(n), share=share))
         matrix = dict(provinces=monthly_provinces, baseline={p: base.get(p) for p in monthly_provinces}, rows=rows)
 
-    empty.update(totals=totals, regions=regions, areas=areas, provinces=provinces, cities=cities, months=months, monthly=monthly,
-                 monthly_provinces=monthly_provinces, products=products, matrix=matrix)
+    empty.update(totals=totals, regions=regions, areas=areas, provinces=provinces, cities=cities, districts=districts, months=months,
+                 monthly=monthly, monthly_provinces=monthly_provinces, products=products, matrix=matrix)
     return empty
 
 
@@ -1346,7 +1358,7 @@ def export_geo_xlsx(toko, O, platform="all", m_from=None, m_to=None):
     """Excel demografi wilayah: pulau, kawasan, SEMUA provinsi & kota, per bulan, produk favorit per provinsi, matriks produk × provinsi."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
-    G = geo_customers(O, platform, m_from, m_to, top_city=0)
+    G = geo_customers(O, platform, m_from, m_to, top_city=0, top_district=0)
     wb = Workbook()
     bold = Font(bold=True)
 
@@ -1367,12 +1379,15 @@ def export_geo_xlsx(toko, O, platform="all", m_from=None, m_to=None):
     T = G["totals"] or {}
     sheet("Ringkasan", ["Keterangan", "Nilai"],
           [["Order terjual dengan wilayah", T.get("orders")], ["Bruto", T.get("bruto")], ["Pelanggan", T.get("customers")],
-           ["Provinsi", T.get("provinces")], ["Kota/kabupaten", T.get("cities")], ["% order yang punya wilayah", T.get("coverage_pct")],
+           ["Provinsi", T.get("provinces")], ["Kota/kabupaten", T.get("cities")], ["Kecamatan", T.get("districts_total")],
+           ["% order yang punya wilayah", T.get("coverage_pct")],
+           ["Order yang punya kecamatan (Shopee saja; TikTok menyamarkan)", T.get("district_orders")], ["% order yang punya kecamatan", T.get("district_coverage_pct")],
            ["Order tanpa wilayah (export lama)", G["no_geo"]], ["Bruto tanpa wilayah", G["no_geo_bruto"]]], first=True)
     sheet("Pulau", ["Pulau"] + H, [[r["region"]] + [r.get(k) for k in K] for r in G["regions"]])
     sheet("Kawasan", ["Kawasan"] + H, [[r["area"]] + [r.get(k) for k in K] for r in G["areas"]])
     sheet("Provinsi", ["Provinsi", "Pulau"] + H, [[r["province"], r["region"]] + [r.get(k) for k in K] for r in G["provinces"]])
     sheet("Kota", ["Kota/Kabupaten", "Provinsi"] + H, [[r["city"], r["province"]] + [r.get(k) for k in K] for r in G["cities"]])
+    sheet("Kecamatan", ["Kecamatan", "Kota/Kabupaten", "Provinsi"] + H, [[r["district"], r["city"], r["province"]] + [r.get(k) for k in K] for r in G["districts"]])
     MP = G["monthly_provinces"]
     sheet("Per bulan (order)", ["Bulan", "Order", "Bruto", "Pelanggan", "Provinsi aktif"] + MP,
           [[m["month"], m["orders"], m["bruto"], m["customers"], m["provinces"]] + [m["by_orders"].get(p, 0) for p in MP] for m in G["monthly"]])

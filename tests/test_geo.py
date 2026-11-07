@@ -53,6 +53,12 @@ def test_norm_province_and_city():
     assert nc("South Tangerang") == "Tangerang Selatan" and nc("Kota Tangerang Selatan") == "Kota Tangerang Selatan"
     assert nc("Depok") == "Depok" and nc("Kecamatan Garut Kota") == "Kecamatan Garut Kota"
     assert nc("") == ""
+    sd = parsers.shopee_district
+    addr = "Jalan Marzuki I No 2A (samping klinik), KOTA JAKARTA TIMUR, CAKUNG, DKI JAKARTA, ID, 13940"
+    assert sd(addr, "KOTA JAKARTA TIMUR", "DKI JAKARTA") == "Cakung"
+    assert sd("Ja******", "KOTA BANDUNG", "JAWA BARAT") == ""                         # alamat disamarkan di export lama
+    assert sd(addr, "KOTA BEKASI", "JAWA BARAT") == ""                                  # segmen tidak cocok kolom → jangan tebak
+    assert parsers.norm_district("*************") == "" and parsers.norm_district("Kec. Medan Satria") == "Medan Satria"
 
 
 def shopee_xlsx(path, rows):
@@ -60,7 +66,8 @@ def shopee_xlsx(path, rows):
     df = pd.DataFrame([dict({"No. Pesanan": o, "Waktu Pesanan Dibuat": d, "Status Pesanan": st, "Status Pembatalan/ Pengembalian": "",
                              "Nomor Referensi SKU": "SKU1", "Nama Produk": p, "Nama Variasi": "", "Jumlah": q, "Subtotal Pesanan": sub,
                              "Harga Awal": sub, "Metode Pembayaran": "COD", "Alasan Pembatalan": "", "Username (Pembeli)": u,
-                             "Nama Penerima": "X", "No. Telepon": "****", "Alamat Pengiriman": "jl", "Kota/Kabupaten": kota, "Provinsi": prov})
+                             "Nama Penerima": "X", "No. Telepon": "****", "Alamat Pengiriman": f"jl 1, {kota}, KEC {o[-3:]}, {prov}, ID, 10000",
+                             "Kota/Kabupaten": kota, "Provinsi": prov})
                        for o, d, st, u, p, q, sub, prov, kota in rows])
     df.to_excel(path, index=False)
 
@@ -81,21 +88,25 @@ def test_parser_keeps_region():
                      ("260102BBB", "2026-01-06 10:00", "Selesai", "sari", "Kemeja", 1, 100000, "NUSA TENGGARA BARAT (NTB)", "KAB. LOMBOK TIMUR")])
     o = parsers.parse_shopee_orders(sp)
     assert list(o["province"]) == ["Jawa Barat", "Nusa Tenggara Barat"] and list(o["city"]) == ["Kota Bekasi", "Kab. Lombok Timur"]
+    assert list(o["district"]) == ["Aaa", "Bbb"]                                     # awalan "KEC" dibuang
     tp = os.path.join(TMP, "Semua pesanan-geo.csv")
     tiktok_csv(tp, [("579000000001", "05/01/2026 10:00:00", "Selesai", "D***i", "Rok", 1, 50000, "West Java", "Bekasi City"),
                     ("579000000002", "06/01/2026 10:00:00", "Selesai", "A***a", "Rok", 1, 50000, "Jakarta Raya", "South Jakarta")])
     t = parsers.parse_tiktok_orders(tp)
     assert list(t["province"]) == ["Jawa Barat", "DKI Jakarta"] and list(t["city"]) == ["Kota Bekasi", "Kota Jakarta Selatan"]
+    assert list(t["district"]) == ["", ""]                                              # TikTok menyamarkan kecamatan
     old = os.path.join(TMP, "Semua pesanan-lama.csv")
     tiktok_csv(old, [("579000000003", "05/01/2026 10:00:00", "Selesai", "D***i", "Rok", 1, 50000, "", "")], geo=False)
     t2 = parsers.parse_tiktok_orders(old)
     assert list(t2["province"]) == [""] and list(t2["city"]) == [""]
 
 
-def _ol(oid, created, buyer, prov, city, product="P", ch=parsers.SHOPEE, bruto=100.0, batal=False, unpaid=False, retur=False):
+def _ol(oid, created, buyer, prov, city, product="P", ch=parsers.SHOPEE, bruto=100.0, batal=False, unpaid=False, retur=False, district=""):
+    if not district and ch == parsers.SHOPEE and city:
+        district = "Kec " + city.split()[-1]
     return dict(platform=parsers.SHOPEE if ch == parsers.SHOPEE else parsers.TIKTOK, channel=ch, order_id=oid,
                 created=pd.Timestamp(created), month=created[:7], status="x", is_batal=batal, is_unpaid=unpaid, is_retur=retur,
-                product=product, variation="", qty=1.0, bruto=bruto, buyer=buyer, buyer_key=buyer.lower(), province=prov, city=city)
+                product=product, variation="", qty=1.0, bruto=bruto, buyer=buyer, buyer_key=buyer.lower(), province=prov, city=city, district=district)
 
 
 def test_geo_analysis_rules():
@@ -129,6 +140,12 @@ def test_geo_analysis_rules():
     city = {c["city"]: c for c in G["cities"]}
     assert city["Kab. Bogor"]["orders"] == 2 and "Bogor" not in city and city["Bandung (?)"]["orders"] == 1
     assert city["Kota Jakarta Selatan"]["orders"] == 1 and city["Kota Jakarta Selatan"]["bruto"] == 200.0
+    # kecamatan: hanya order Shopee (6 order) yang punya; % dihitung dari order berkecamatan
+    assert T["district_orders"] == 6 and T["district_coverage_pct"] == 75.0 and T["district_shopee_pct"] == 100.0
+    dist = {(d["city"], d["district"]): d for d in G["districts"]}
+    assert dist[("Kota Bekasi", "Kec Bekasi")]["orders"] == 2 and dist[("Kota Bekasi", "Kec Bekasi")]["orders_pct"] == 33.3
+    assert dist[("Kab. Bogor", "Kec Bogor")]["orders"] == 2 and ("Kota Surabaya", "Kec Surabaya") not in dist
+    assert T["districts_total"] == 4 and all(d["province"] for d in G["districts"])
     m = {x["month"]: x for x in G["monthly"]}
     assert m["2026-01"]["orders"] == 2 and m["2026-01"]["by_orders"] == {"Jawa Barat": 1, "DKI Jakarta": 1}
     assert G["monthly_provinces"] == ["Jawa Barat", "Sulawesi Selatan", "DKI Jakarta", "Jawa Timur"]   # urut order lalu bruto
@@ -166,12 +183,12 @@ def test_api_geo_and_reparse_old_upload():
     # simulasi file yang diproses parser lama (sebelum kolom wilayah): kolom dikosongkan, versi diturunkan → tab memicu parse ulang dari arsip
     eng = db.engine()
     with eng.begin() as cx:
-        cx.execute(sa.text("UPDATE upload SET parser_version='12' WHERE file='Order.all.api.xlsx'"))
-        cx.execute(sa.text("UPDATE order_line SET province=NULL, city=NULL"))
+        cx.execute(sa.text("UPDATE upload SET parser_version='13' WHERE file='Order.all.api.xlsx'"))
+        cx.execute(sa.text("UPDATE order_line SET province=NULL, city=NULL, district=NULL"))
     appmod._cache.clear()
     assert db.uploads_needing_buyer(TOKO) == ["Order.all.api.xlsx"]
     g2 = c.get("/api/geo", params=dict(toko=TOKO)).json()
-    assert g2["reparsed"] == 1 and g2["totals"]["orders"] == 2 and g2["totals"]["provinces"] == 2
+    assert g2["reparsed"] == 1 and g2["totals"]["orders"] == 2 and g2["totals"]["provinces"] == 2 and g2["totals"]["districts_total"] == 2
     assert db.uploads_needing_buyer(TOKO) == []
 
 

@@ -145,6 +145,10 @@ def parse_shopee_orders(path):
     # wilayah pembeli (analisa demografi wilayah): kolom Provinsi & Kota/Kabupaten ada di semua format Order.all
     out["province"] = df["Provinsi"].map(norm_province) if "Provinsi" in df.columns else ""
     out["city"] = df["Kota/Kabupaten"].map(norm_city) if "Kota/Kabupaten" in df.columns else ""
+    if {"Alamat Pengiriman", "Kota/Kabupaten", "Provinsi"} <= set(df.columns):
+        out["district"] = [shopee_district(a, k, p) for a, k, p in zip(df["Alamat Pengiriman"], df["Kota/Kabupaten"], df["Provinsi"])]
+    else:
+        out["district"] = ""
     out["line_key"] = out["order_id"] + "|" + out["sku"] + "|" + out["variation"] + "|" + out["product"]
     return out
 
@@ -257,6 +261,27 @@ def norm_city(s):
         typ = "Kota"
     name = _title(k)
     return (typ + " " + name) if typ else name
+
+
+def norm_district(s):
+    """Kecamatan → title case ('CAKUNG' → 'Cakung'); nilai tersamar ('****') atau kosong → ''."""
+    s = _s(s)
+    if not s or "*" in s:
+        return ""
+    k = _clean_place(s)
+    k = re.sub(r"^(kecamatan|kec)\s+", "", k)
+    return _title(k) if k else ""
+
+
+def shopee_district(addr, city, prov):
+    """Kecamatan dari kolom 'Alamat Pengiriman' Shopee: '<alamat>, <KOTA/KAB>, <KECAMATAN>, <PROVINSI>, ID, <kodepos>'.
+    Diambil hanya bila segmen kota & provinsi cocok dengan kolomnya (alamat yang disamarkan 'Ja******' → '')."""
+    seg = [p.strip() for p in _s(addr).split(",")]
+    if len(seg) < 6 or seg[-2].upper() != "ID":
+        return ""
+    if seg[-3].strip().upper() != _s(prov).upper() or seg[-5].strip().upper() != _s(city).upper():
+        return ""
+    return norm_district(seg[-4])
 
 
 def _buyer_key(uname, rcpt, phone):
@@ -470,6 +495,7 @@ def parse_tiktok_orders(path):
     # wilayah pembeli: kolom Province / Regency and City ada sejak export ±Nov 2025 (export lebih lama tidak punya → kosong)
     out["province"] = df["Province"].map(norm_province) if "Province" in df.columns else ""
     out["city"] = df["Regency and City"].map(norm_city) if "Regency and City" in df.columns else ""
+    out["district"] = df["Districts"].map(norm_district) if "Districts" in df.columns else ""   # TikTok menyamarkan ('*****') → kosong
     out["line_key"] = out["order_id"] + "|" + out["sku_id"] + "|" + out["variation"]
     return out
 
@@ -672,7 +698,7 @@ def tiktok_income_summary(wb):
 
 # ---------------------------------------------------------------- entry point + cache
 
-PARSER_VERSION = "13"   # 13: kolom wilayah pembeli (province, city) di baris pesanan
+PARSER_VERSION = "14"   # 13: kolom wilayah pembeli (province, city); 14: + kecamatan (district, Shopee dari Alamat Pengiriman)
 
 KINDS = {
     "shopee_orders": "Shopee · Order.all",
