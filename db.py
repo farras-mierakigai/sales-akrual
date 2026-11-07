@@ -164,6 +164,7 @@ ORDER_COLS = [
     ("sku", Text), ("sku_id", Text), ("product", Text), ("variation", Text), ("qty", Float), ("bruto", Float),
     ("harga_awal", Float), ("payment", Text), ("cancel_reason", Text), ("line_key", Text), ("file", Text), ("file_mtime", Float),
     ("buyer", Text), ("buyer_key", Text),      # identitas pembeli (sejak parser 11) — analisa pelanggan berulang
+    ("province", Text), ("city", Text),        # wilayah pembeli, sudah dinormalkan (sejak parser 13) — analisa demografi wilayah
 ]
 INCOME_COLS = [
     ("platform", String(16)), ("channel", String(16)), ("order_id", String(64)), ("created", DateTime), ("settled", DateTime),
@@ -279,7 +280,7 @@ def _migrate_schema(eng):
         if "workspace_id" not in cols_toko:
             run(cx, f"ALTER TABLE toko ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT {DEFAULT_WS}")
         cols_ol = {c["name"] for c in sa.inspect(cx).get_columns("order_line")}
-        for col in ("buyer", "buyer_key"):
+        for col in ("buyer", "buyer_key", "province", "city"):
             if col not in cols_ol:
                 run(cx, f"ALTER TABLE order_line ADD COLUMN {col} TEXT")
         cols_ws = {c["name"] for c in sa.inspect(cx).get_columns("workspace")}
@@ -492,11 +493,13 @@ def ingest_file(name, path, uploaded_by=""):
 
 
 BUYER_PARSER = 11   # versi parser pertama yang menyimpan identitas pembeli
+GEO_PARSER = 13     # versi parser pertama yang menyimpan wilayah pembeli (provinsi, kota/kabupaten)
 
 # File yang diproses parser lebih lama dari versi ini perlu diparse ulang dari arsip: (jenis file, versi minimum, alasan)
 REPARSE_RULES = [
     (("shopee_orders", "tiktok_orders"), BUYER_PARSER, "kolom pembeli"),
     (("tiktok_income",), 12, "kolom refund format export TikTok baru (Okt 2026)"),
+    (("shopee_orders", "tiktok_orders"), GEO_PARSER, "kolom wilayah pembeli"),
 ]
 
 
@@ -521,7 +524,7 @@ def uploads_needing_reparse(name, kinds=None):
 
 
 def uploads_needing_buyer(name):
-    """File pesanan yang belum punya kolom pembeli (dipakai tab Pelanggan berulang)."""
+    """File pesanan yang belum punya kolom pembeli / wilayah (dipakai tab Pelanggan berulang & Wilayah pembeli)."""
     return uploads_needing_reparse(name, kinds=("shopee_orders", "tiktok_orders"))
 
 
@@ -539,7 +542,7 @@ def reingest_outdated(name, kinds=None):
 
 
 def reingest_old_orders(name):
-    """Kompat: parse ulang file pesanan lama saja (kolom pembeli)."""
+    """Kompat: parse ulang file pesanan lama saja (kolom pembeli, kolom wilayah)."""
     return reingest_outdated(name, kinds=("shopee_orders", "tiktok_orders"))
 
 

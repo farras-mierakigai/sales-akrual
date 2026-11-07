@@ -142,12 +142,121 @@ def parse_shopee_orders(path):
     phone = df["No. Telepon"].str.strip() if "No. Telepon" in df.columns else pd.Series([""] * len(df))
     out["buyer"] = uname.where(uname != "", rcpt)
     out["buyer_key"] = _buyer_key(uname, rcpt, phone)
+    # wilayah pembeli (analisa demografi wilayah): kolom Provinsi & Kota/Kabupaten ada di semua format Order.all
+    out["province"] = df["Provinsi"].map(norm_province) if "Provinsi" in df.columns else ""
+    out["city"] = df["Kota/Kabupaten"].map(norm_city) if "Kota/Kabupaten" in df.columns else ""
     out["line_key"] = out["order_id"] + "|" + out["sku"] + "|" + out["variation"] + "|" + out["product"]
     return out
 
 
 # akun agregat milik marketplace, bukan pelanggan: Shopee SIP (pembeli luar negeri lewat Shopee International Platform)
 AGGREGATE_BUYERS = {"sipbuyerid"}
+
+
+# ---------------------------------------------------------------- wilayah pembeli (provinsi & kota/kabupaten)
+# Shopee menulis huruf besar semua ("JAWA BARAT", "KOTA BEKASI", "KAB. BOGOR"); TikTok campur bahasa Indonesia/Inggris &
+# berubah-ubah antar export ("West Java", "Jakarta Raya", "Bekasi City", "South Tangerang", "Kota Administrasi Jakarta Timur").
+# Semua dinormalkan ke satu ejaan supaya bisa dijumlahkan lintas platform.
+
+PROVINCES = [
+    "Aceh", "Sumatera Utara", "Sumatera Barat", "Riau", "Kepulauan Riau", "Jambi", "Sumatera Selatan", "Kepulauan Bangka Belitung",
+    "Bengkulu", "Lampung", "DKI Jakarta", "Jawa Barat", "Banten", "Jawa Tengah", "DI Yogyakarta", "Jawa Timur", "Bali",
+    "Nusa Tenggara Barat", "Nusa Tenggara Timur", "Kalimantan Barat", "Kalimantan Tengah", "Kalimantan Selatan", "Kalimantan Timur",
+    "Kalimantan Utara", "Sulawesi Utara", "Gorontalo", "Sulawesi Tengah", "Sulawesi Barat", "Sulawesi Selatan", "Sulawesi Tenggara",
+    "Maluku", "Maluku Utara", "Papua", "Papua Barat", "Papua Tengah", "Papua Pegunungan", "Papua Selatan", "Papua Barat Daya",
+]
+_PROV_ALIAS = {
+    "nanggroe aceh darussalam": "Aceh", "di aceh": "Aceh", "d i aceh": "Aceh", "nad": "Aceh",
+    "north sumatra": "Sumatera Utara", "sumatra utara": "Sumatera Utara", "sumut": "Sumatera Utara",
+    "west sumatra": "Sumatera Barat", "sumatra barat": "Sumatera Barat", "sumbar": "Sumatera Barat",
+    "south sumatra": "Sumatera Selatan", "sumatra selatan": "Sumatera Selatan", "sumsel": "Sumatera Selatan",
+    "riau islands": "Kepulauan Riau", "kep riau": "Kepulauan Riau", "kepri": "Kepulauan Riau",
+    "bangka belitung": "Kepulauan Bangka Belitung", "bangka belitung islands": "Kepulauan Bangka Belitung",
+    "kep bangka belitung": "Kepulauan Bangka Belitung", "babel": "Kepulauan Bangka Belitung",
+    "jakarta": "DKI Jakarta", "jakarta raya": "DKI Jakarta", "daerah khusus ibukota jakarta": "DKI Jakarta",
+    "daerah khusus jakarta": "DKI Jakarta", "dkj": "DKI Jakarta", "special capital region of jakarta": "DKI Jakarta",
+    "west java": "Jawa Barat", "jawa kulon": "Jawa Barat", "jabar": "Jawa Barat",
+    "central java": "Jawa Tengah", "jateng": "Jawa Tengah",
+    "east java": "Jawa Timur", "jawa wetan": "Jawa Timur", "jawa wétan": "Jawa Timur", "jatim": "Jawa Timur",
+    "yogyakarta": "DI Yogyakarta", "d i yogyakarta": "DI Yogyakarta", "daerah istimewa yogyakarta": "DI Yogyakarta",
+    "special region of yogyakarta": "DI Yogyakarta", "diy": "DI Yogyakarta", "jogjakarta": "DI Yogyakarta",
+    "west nusa tenggara": "Nusa Tenggara Barat", "ntb": "Nusa Tenggara Barat",
+    "east nusa tenggara": "Nusa Tenggara Timur", "ntt": "Nusa Tenggara Timur",
+    "west kalimantan": "Kalimantan Barat", "kalbar": "Kalimantan Barat", "central kalimantan": "Kalimantan Tengah", "kalteng": "Kalimantan Tengah",
+    "south kalimantan": "Kalimantan Selatan", "kalsel": "Kalimantan Selatan", "east kalimantan": "Kalimantan Timur", "kaltim": "Kalimantan Timur",
+    "north kalimantan": "Kalimantan Utara", "kaltara": "Kalimantan Utara",
+    "north sulawesi": "Sulawesi Utara", "sulut": "Sulawesi Utara", "central sulawesi": "Sulawesi Tengah", "sulteng": "Sulawesi Tengah",
+    "west sulawesi": "Sulawesi Barat", "sulbar": "Sulawesi Barat", "south sulawesi": "Sulawesi Selatan", "sulsel": "Sulawesi Selatan",
+    "southeast sulawesi": "Sulawesi Tenggara", "south east sulawesi": "Sulawesi Tenggara", "sultra": "Sulawesi Tenggara",
+    "north maluku": "Maluku Utara", "malut": "Maluku Utara",
+    "west papua": "Papua Barat", "central papua": "Papua Tengah", "highland papua": "Papua Pegunungan", "papua highlands": "Papua Pegunungan",
+    "south papua": "Papua Selatan", "southwest papua": "Papua Barat Daya",
+}
+_PROV_CANON = {p.lower(): p for p in PROVINCES}
+_PROV_CANON.update({k: v for k, v in _PROV_ALIAS.items()})
+_PAREN = re.compile(r"\(.*?\)")
+_NONWORD = re.compile(r"[^\w\s]")
+_SPACES = re.compile(r"\s+")
+
+
+def _clean_place(s):
+    s = _s(s).replace("+", " ").replace("\t", " ")
+    s = _PAREN.sub(" ", s)
+    s = _NONWORD.sub(" ", s)
+    return _SPACES.sub(" ", s).strip().lower()
+
+
+def _title(s):
+    out = []
+    for w in s.split():
+        out.append(w.upper() if w.lower() in ("dki", "di", "ntb", "ntt") else (w[:1].upper() + w[1:]))
+    return " ".join(out)
+
+
+def norm_province(s):
+    """'JAWA BARAT' / 'West Java Province' / 'Jakarta Raya' → 'Jawa Barat' / 'Jawa Barat' / 'DKI Jakarta'. Kosong → ''."""
+    k = _clean_place(s)
+    if not k:
+        return ""
+    k = re.sub(r"^(provinsi|province of|prov)\s+", "", k)
+    k = re.sub(r"\s+(province|provinsi|prov)$", "", k)
+    if k in _PROV_CANON:
+        return _PROV_CANON[k]
+    k2 = k.replace("daerah istimewa", "di").replace("sumatra", "sumatera")
+    if k2 in _PROV_CANON:
+        return _PROV_CANON[k2]
+    return _title(k)
+
+
+_DIR_EN = {"north": "utara", "south": "selatan", "east": "timur", "west": "barat", "central": "tengah", "southeast": "tenggara"}
+
+
+def norm_city(s):
+    """Kota/kabupaten → 'Kota Bekasi' / 'Kab. Bogor' / 'Bogor' (jenis tidak disebut).
+
+    'KOTA JAKARTA TIMUR', 'Kota Administrasi Jakarta Timur', 'East Jakarta', 'Jakarta Timur' → 'Kota Jakarta Timur';
+    'Kabupaten Bogor', 'Bogor Regency', 'KAB. BOGOR' → 'Kab. Bogor'; 'Bekasi City' → 'Kota Bekasi'; 'South Tangerang' → 'Tangerang Selatan'.
+    """
+    k = _clean_place(s)
+    if not k:
+        return ""
+    typ = ""
+    m = re.match(r"^(kota administrasi|kabupaten kota|kota adm|kota|kabupaten|kab|kabupaten administrasi|kab adm)\s+(.+)$", k)
+    if m:
+        typ = "Kota" if m.group(1) in ("kota administrasi", "kabupaten kota", "kota adm", "kota") else "Kab."
+        k = m.group(2)
+    m = re.match(r"^(.+?)\s+(city|regency)$", k)      # 'Bekasi City', 'Bogor Regency' (akhiran 'kota' tidak: 'Garut Kota' = nama kecamatan)
+    if m:
+        typ = "Kota" if m.group(2) == "city" else "Kab."
+        k = m.group(1)
+    m = re.match(r"^(north|south|east|west|central|southeast)\s+(.+)$", k)
+    if m:
+        d, name = m.group(1), m.group(2)
+        k = name + " " + ("pusat" if d == "central" and name == "jakarta" else _DIR_EN[d])
+    if k.startswith("jakarta ") and k.split()[-1] in ("utara", "selatan", "timur", "barat", "pusat"):
+        typ = "Kota"
+    name = _title(k)
+    return (typ + " " + name) if typ else name
 
 
 def _buyer_key(uname, rcpt, phone):
@@ -358,6 +467,9 @@ def parse_tiktok_orders(path):
     phone = df["Phone #"] if "Phone #" in df.columns else pd.Series([""] * len(df))
     out["buyer"] = uname.where(uname != "", rcpt)
     out["buyer_key"] = _buyer_key(uname, rcpt, phone)
+    # wilayah pembeli: kolom Province / Regency and City ada sejak export ±Nov 2025 (export lebih lama tidak punya → kosong)
+    out["province"] = df["Province"].map(norm_province) if "Province" in df.columns else ""
+    out["city"] = df["Regency and City"].map(norm_city) if "Regency and City" in df.columns else ""
     out["line_key"] = out["order_id"] + "|" + out["sku_id"] + "|" + out["variation"]
     return out
 
@@ -560,7 +672,7 @@ def tiktok_income_summary(wb):
 
 # ---------------------------------------------------------------- entry point + cache
 
-PARSER_VERSION = "12"   # 12: alias kolom refund TikTok format Okt 2026
+PARSER_VERSION = "13"   # 13: kolom wilayah pembeli (province, city) di baris pesanan
 
 KINDS = {
     "shopee_orders": "Shopee · Order.all",

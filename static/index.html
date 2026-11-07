@@ -138,6 +138,7 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
     <button data-tab="bulan">Per bulan (laporan)</button>
     <button data-tab="produk">Produk</button>
     <button data-tab="repeat">Pelanggan berulang</button>
+    <button data-tab="geo">Wilayah pembeli</button>
     <button data-tab="detail">Status · Batal · Bayar</button>
     <button data-tab="hpp">HPP &amp; Laba</button>
     <button data-tab="iklan">Iklan</button>
@@ -241,6 +242,24 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
       </div>
       <div class="card"><h2>Retensi kohort</h2><div class="desc">Kohort = bulan order pertama pelanggan. Kolom <b>+k</b> = % pelanggan kohort itu yang order lagi k bulan kemudian (+0 selalu 100%). Warna makin pekat = makin banyak yang kembali.</div><div class="tblwrap"><table id="tblRepCohort"></table></div></div>
       <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Pelanggan berulang teratas</h2><div class="desc">50 pelanggan dengan order terbanyak (sepanjang data) yang aktif di periode. Shopee = username; TikTok/Tokopedia menyamarkan nama pembeli, dicocokkan dari pola nama + nomor HP tersamar (bisa sedikit meleset). Daftar lengkap ada di Excel.</div></div><input type="text" id="repSearch" placeholder="🔍 cari pelanggan / produk…" style="min-width:240px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblRepTop"></table></div></div>
+    </div>
+  </div>
+
+  <!-- WILAYAH PEMBELI -->
+  <div class="panel" id="p-geo">
+    <div id="geoEmpty" class="empty">Pilih toko lalu klik <b>Hitung</b>.</div>
+    <div id="geoBody" style="display:none">
+      <div class="note" id="geoNote"></div>
+      <div class="tiles" id="geoTiles"></div>
+      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Sebaran per pulau & kawasan</h2><div class="desc">Basis = order <b>terjual</b> (non-batal, non-retur, sudah bayar) dari file pesanan, periode & filter di atas. Wilayah = <b>alamat pengiriman</b> order (provinsi & kota/kabupaten); ejaan Shopee/TikTok yang berbeda-beda disatukan. <b>Jabodetabek</b> = DKI Jakarta + Bogor, Depok, Tangerang, Tangerang Selatan, Bekasi (kota & kabupaten). <b>Pelanggan</b> = pembeli unik per platform; yang alamatnya pindah dihitung di tiap wilayah yang pernah dipakai.</div></div><button id="btnGeoX">⬇ Excel wilayah</button></div><div class="tblwrap"><table id="tblGeoRegion"></table></div></div>
+      <div class="grid2">
+        <div class="card"><h2>10 provinsi teratas</h2><div class="desc">Jumlah order terjual per provinsi di periode, dipecah per platform.</div><div class="chart" style="height:340px"><canvas id="chGeoProv"></canvas></div><div class="legend" id="lgGeoProv"></div></div>
+        <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Komposisi provinsi per bulan</h2><div class="desc">% order (atau bruto) tiap bulan menurut provinsi: 8 provinsi teratas periode ini digambar sendiri, sisanya <b>Lainnya</b>. Untuk melihat apakah porsi suatu wilayah naik/turun dari bulan ke bulan.</div></div><select id="geoMonthMode"><option value="orders">% order</option><option value="bruto">% bruto</option></select></div><div class="chart" style="height:340px"><canvas id="chGeoMonth"></canvas></div><div class="legend" id="lgGeoMonth"></div></div>
+      </div>
+      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Per provinsi</h2><div class="desc">Semua provinsi, urut jumlah order. <b>% beli ≥2×</b> = pelanggan di provinsi itu yang order lebih dari sekali <i>di periode ini</i> (bukan sepanjang data).</div></div><input type="text" id="geoProvSearch" placeholder="🔍 cari provinsi / pulau…" style="min-width:220px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblGeoProv"></table></div></div>
+      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Kota/kabupaten teratas</h2><div class="desc">60 kota/kabupaten dengan order terbanyak; daftar lengkap ada di Excel. Export TikTok lama kadang menulis nama kota tanpa jenis ("Bogor"): digabung ke Kota/Kab. bila di provinsi itu hanya ada satu, selain itu ditandai <b>(?)</b>.</div></div><input type="text" id="geoCitySearch" placeholder="🔍 cari kota / provinsi…" style="min-width:220px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblGeoCity"></table></div></div>
+      <div class="card"><h2>Produk favorit per provinsi</h2><div class="desc">5 produk dengan order terbanyak di tiap provinsi (10 provinsi teratas). % = porsi dari order provinsi itu. Nama produk dikelompokkan dari judul listing (prefix brand dibuang) seperti di tab Pelanggan berulang.</div><div class="tblwrap" style="max-height:50vh"><table id="tblGeoProd"></table></div></div>
+      <div class="card"><h2>Produk × provinsi: di mana produk lebih laku?</h2><div class="desc">Tiap sel = % order produk itu yang dikirim ke provinsi tersebut. Baris pertama = sebaran semua order (pembanding). Angka dalam kurung = indeks terhadap pembanding (120 = porsi provinsi itu 20% lebih besar dari biasanya; ungu pekat = jauh di atas, oranye = di bawah).</div><div class="tblwrap" style="max-height:60vh"><table id="tblGeoMatrix"></table></div></div>
     </div>
   </div>
 
@@ -489,6 +508,7 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   if(b.dataset.tab==='hpp') loadHpp();
   if(b.dataset.tab==='iklan') loadAds();
   if(b.dataset.tab==='repeat' && !REP) loadRepeat();
+  if(b.dataset.tab==='geo' && !GEO) loadGeo();
   if(b.dataset.tab==='tiket' && !TK.cur) loadTiket();
   try{localStorage.setItem('sa_tab',b.dataset.tab)}catch(e){}
 });
@@ -607,7 +627,7 @@ async function loadSummary(){
   const t=$('#toko').value; if(!t) return toast('pilih toko dulu');
   const q=qs({platform:$('#platform').value});
   $('#loadinfo').textContent='menghitung…'; $('#btnLoad').disabled=true;
-  try{ DATA=await api('/api/summary?'+q); render(); $('#loadinfo').textContent=DATA.rows.length+' bulan · '+DATA.files.length+' file'; REP=null; if(document.querySelector('#p-repeat').classList.contains('on')) loadRepeat(); }
+  try{ DATA=await api('/api/summary?'+q); render(); $('#loadinfo').textContent=DATA.rows.length+' bulan · '+DATA.files.length+' file'; REP=null; GEO=null; if(document.querySelector('#p-repeat').classList.contains('on')) loadRepeat(); if(document.querySelector('#p-geo').classList.contains('on')) loadGeo(); }
   catch(e){ toast('gagal: '+e.message); $('#loadinfo').textContent=''; }
   finally{ $('#btnLoad').disabled=false; }
 }
@@ -851,6 +871,82 @@ function renderRepTop(){
 }
 $('#repSearch').oninput=()=>{ if(REP) renderRepTop(); };
 $('#btnRepeatX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/repeat.xlsx?'+qs({platform:$('#platform').value}); };
+
+// ---------- wilayah pembeli (demografi)
+let GEO=null;
+const GEO_COL=['#5E1AF1','#F4561E','#0F766E','#D97706','#2563EB','#DB2777','#65A30D','#8B5CF6','#9CA3AF'];
+async function loadGeo(){
+  const t=$('#toko').value; if(!t) return;
+  $('#geoEmpty').style.display='block'; $('#geoEmpty').textContent='menghitung sebaran wilayah…'; $('#geoBody').style.display='none';
+  try{ GEO=await api('/api/geo?'+qs({platform:$('#platform').value})); renderGeo(); }
+  catch(e){ $('#geoEmpty').textContent='gagal: '+e.message; }
+}
+const geoBar=(p,c)=>`<td style="min-width:110px"><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:8px;border-radius:4px;background:#EEE;overflow:hidden"><div style="width:${Math.min(100,p||0)}%;height:100%;background:${c||'#5E1AF1'}"></div></div><span class="small" style="min-width:42px;text-align:right">${pct(p)}</span></div></td>`;
+const GEO_TH='<th>Order</th><th>% order</th><th>Bruto</th><th>% bruto</th><th>Qty</th><th>Pelanggan</th><th>Rata-rata/ order</th><th>Shopee</th><th>TikTok</th><th>Tokopedia</th><th>Beli ≥2×</th><th>%</th>';
+const geoTds=r=>`<td>${fmt(r.orders)}</td>${geoBar(r.orders_pct)}<td>${fmt(r.bruto)}</td><td>${pct(r.bruto_pct)}</td><td>${fmt(r.qty)}</td><td>${fmt(r.customers)}</td><td>${fmt(r.aov)}</td><td>${fmt(r.shopee)}</td><td>${fmt(r.tiktok)}</td><td>${fmt(r.tokopedia)}</td><td>${fmt(r.repeat_customers)}</td><td>${pct(r.repeat_pct)}</td>`;
+function renderGeo(){
+  const G=GEO, T=G.totals;
+  if(!T){ $('#geoEmpty').style.display='block'; $('#geoEmpty').innerHTML=G.has_geo?'Tidak ada order terjual untuk filter ini.':'Belum ada data wilayah: file pesanan di toko ini tidak memuat kolom provinsi/kota (export TikTok sebelum ±Nov 2025 tidak punya kolom itu). Upload file pesanan terbaru dari seller center, atau minta admin menjalankan parse ulang.'; $('#geoBody').style.display='none'; return; }
+  $('#geoEmpty').style.display='none'; $('#geoBody').style.display='block';
+  const months=G.months||[]; const labels=months.map(monthLabel);
+  let note=`<b>Periode:</b> ${labels.length?labels[0]+(labels.length>1?' – '+labels[labels.length-1]:''):'–'} · platform: <b>${$('#platform').options[$('#platform').selectedIndex].text}</b> · ${fmt(T.orders)} order terjual punya alamat (${pct(T.coverage_pct)})`;
+  if(G.reparsed) note+=` · <span class="pill info">${fmt(G.reparsed)} file pesanan lama diparse ulang agar kolom wilayah terisi</span>`;
+  if(G.no_geo) note+=` · <span class="pill warn">${fmt(G.no_geo)} order (${fmtJt(G.no_geo_bruto)}) tanpa wilayah — export TikTok lama tanpa kolom alamat; tidak masuk analisa</span>`;
+  if((G.reparse_missing||[]).length) note+=` · <span class="pill bad">arsip tidak ada: ${G.reparse_missing.join(', ')}</span>`;
+  $('#geoNote').innerHTML=note;
+  const P=G.provinces||[], A={}; (G.areas||[]).forEach(a=>A[a.area]=a); const top=P[0]||{};
+  const tiles=[
+    ['Provinsi terjangkau', fmt(T.provinces)+' / 38', fmt(T.cities)+' kota/kabupaten'],
+    ['Pelanggan', fmt(T.customers), fmt(T.orders)+' order · '+fmtRp(T.aov)+' per order'],
+    ['Provinsi #1: '+(top.province||'–'), pct(top.orders_pct), fmt(top.orders)+' order · '+pct(top.bruto_pct)+' bruto'],
+    ['Jabodetabek', pct((A['Jabodetabek']||{}).orders_pct), fmt((A['Jabodetabek']||{}).orders)+' order · '+pct((A['Jabodetabek']||{}).bruto_pct)+' bruto'],
+    ['Jawa di luar Jabodetabek', pct((A['Jawa di luar Jabodetabek']||{}).orders_pct), fmt((A['Jawa di luar Jabodetabek']||{}).orders)+' order'],
+    ['Luar Jawa', pct((A['Luar Jawa']||{}).orders_pct), fmt((A['Luar Jawa']||{}).orders)+' order · '+pct((A['Luar Jawa']||{}).bruto_pct)+' bruto'],
+  ];
+  $('#geoTiles').innerHTML=tiles.map(t=>`<div class="tile"><div class="k">${t[0]}</div><div class="v">${t[1]}</div><div class="s">${t[2]}</div></div>`).join('');
+  $('#tblGeoRegion').innerHTML='<tr><th class="l">Pulau</th>'+GEO_TH+'</tr>'+(G.regions||[]).map(r=>`<tr><td class="l">${r.region}</td>${geoTds(r)}</tr>`).join('')
+    +'<tr><th class="l">Kawasan</th>'+GEO_TH+'</tr>'+(G.areas||[]).map(r=>`<tr><td class="l">${r.area}</td>${geoTds(r)}</tr>`).join('');
+  const P10=P.slice(0,10);
+  mkChart('chGeoProv',{type:'bar',data:{labels:P10.map(p=>p.province),datasets:[
+    {label:'Shopee',data:P10.map(p=>p.shopee),backgroundColor:COL.Shopee,borderRadius:3,borderSkipped:'start'},
+    {label:'TikTok Shop',data:P10.map(p=>p.tiktok),backgroundColor:COL.TikTok,borderRadius:3,borderSkipped:'start'},
+    {label:'Tokopedia',data:P10.map(p=>p.tokopedia),backgroundColor:COL.Tokopedia,borderRadius:3,borderSkipped:'start'}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',titleColor:'#1E1E1E',bodyColor:'#1E1E1E',borderColor:'#1E1E1E',borderWidth:1,callbacks:{label:c=>' '+c.dataset.label+': '+fmt(c.raw)+' order',footer:it=>'Total: '+fmt(P10[it[0].dataIndex].orders)+' order ('+pct(P10[it[0].dataIndex].orders_pct)+')'}}},scales:{x:{stacked:true,beginAtZero:true,grid:{color:'#EEE'},border:{display:false},ticks:{color:'#5B5B6B',callback:v=>fmt(v)}},y:{stacked:true,grid:{display:false},ticks:{color:'#5B5B6B'}}}}});
+  legend('#lgGeoProv',[{c:COL.Shopee,l:'Shopee'},{c:COL.TikTok,l:'TikTok Shop'},{c:COL.Tokopedia,l:'Tokopedia'}]);
+  renderGeoProv(); renderGeoMonth(); renderGeoCity();
+  const PR=G.products||[]; let last='';
+  $('#tblGeoProd').innerHTML='<tr><th class="l">Provinsi</th><th class="l">Produk</th><th>Order</th><th>% order provinsi</th><th>Bruto</th></tr>'+(PR.length?PR.map(p=>{const first=p.province!==last; last=p.province; return `<tr${first?' style="border-top:2px solid #DDD"':''}><td class="l"${first?'':' class="l muted"'}>${first?'<b>'+p.province+'</b>':''}</td>${ell(p.product,260)}<td>${fmt(p.orders)}</td>${geoBar(p.pct,'#F4561E')}<td>${fmt(p.bruto)}</td></tr>`}).join(''):'<tr><td class="muted" colspan="5">belum ada</td></tr>');
+  const M=G.matrix;
+  if(!M||!M.rows.length){ $('#tblGeoMatrix').innerHTML='<tr><td class="muted">belum ada</td></tr>'; }
+  else{
+    const cell=(v,b)=>{ if(v==null||b==null||!b) return `<td>${pct(v)}</td>`; const idx=Math.round(100*v/b); const d=Math.max(-1,Math.min(1,(idx-100)/100)); const bg=d>0?`rgba(94,26,241,${(0.08+0.55*d).toFixed(2)})`:`rgba(244,86,30,${(0.06+0.45*-d).toFixed(2)})`; return `<td style="background:${bg};${d>0.6?'color:#fff':''}" title="indeks ${idx}">${pct(v)} <span class="small" style="opacity:.75">(${idx})</span></td>`; };
+    $('#tblGeoMatrix').innerHTML='<tr><th class="l">Produk</th><th>Order</th>'+M.provinces.map(p=>`<th>${p}</th>`).join('')+'</tr>'
+      +`<tr class="tot"><td class="l">Semua order (pembanding)</td><td>${fmt(T.orders)}</td>${M.provinces.map(p=>`<td>${pct(M.baseline[p])}</td>`).join('')}</tr>`
+      +M.rows.map(r=>`<tr>${ell(r.product,240)}<td>${fmt(r.orders)}</td>${M.provinces.map(p=>cell(r.share[p],M.baseline[p])).join('')}</tr>`).join('');
+  }
+}
+function renderGeoProv(){
+  const q=($('#geoProvSearch').value||'').toLowerCase().trim();
+  const rows=(GEO.provinces||[]).filter(p=>!q||(p.province+' '+p.region).toLowerCase().includes(q));
+  $('#tblGeoProv').innerHTML='<tr><th class="l">Provinsi</th><th class="l">Pulau</th>'+GEO_TH+'</tr>'+(rows.length?rows.map(r=>`<tr><td class="l">${r.province}</td><td class="l small">${r.region}</td>${geoTds(r)}</tr>`).join(''):'<tr><td class="muted" colspan="14">tidak ada</td></tr>');
+}
+function renderGeoCity(){
+  const q=($('#geoCitySearch').value||'').toLowerCase().trim();
+  const rows=(GEO.cities||[]).filter(c=>!q||(c.city+' '+c.province).toLowerCase().includes(q));
+  $('#tblGeoCity').innerHTML='<tr><th class="l">Kota/Kabupaten</th><th class="l">Provinsi</th>'+GEO_TH+'</tr>'+(rows.length?rows.map(r=>`<tr><td class="l">${r.city}</td><td class="l small">${r.province}</td>${geoTds(r)}</tr>`).join(''):'<tr><td class="muted" colspan="14">tidak ada</td></tr>');
+}
+function renderGeoMonth(){
+  const G=GEO; const M=G.monthly||[]; const PV=G.monthly_provinces||[]; const mode=$('#geoMonthMode').value;
+  const labels=(G.months||[]).map(monthLabel);
+  const val=(m,p)=>{ const tot=mode==='orders'?m.orders:m.bruto; const v=(mode==='orders'?m.by_orders:m.by_bruto)[p]||0; return tot?Math.round(1000*v/tot)/10:0; };
+  mkChart('chGeoMonth',{type:'bar',data:{labels,datasets:PV.map((p,i)=>({label:p,data:M.map(m=>val(m,p)),backgroundColor:p==='Lainnya'?'#9CA3AF':GEO_COL[i%GEO_COL.length],borderRadius:2,borderSkipped:'bottom'}))},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',titleColor:'#1E1E1E',bodyColor:'#1E1E1E',borderColor:'#1E1E1E',borderWidth:1,callbacks:{label:c=>' '+c.dataset.label+': '+pct(c.raw)+(mode==='orders'?' ('+fmt((M[c.dataIndex].by_orders||{})[c.dataset.label]||0)+' order)':' ('+fmtJt((M[c.dataIndex].by_bruto||{})[c.dataset.label]||0)+')')}}},scales:{x:{stacked:true,grid:{display:false},ticks:{color:'#5B5B6B'}},y:{stacked:true,min:0,max:100,grid:{color:'#EEE'},border:{display:false},ticks:{color:'#5B5B6B',callback:v=>v+'%'}}}}});
+  legend('#lgGeoMonth',PV.map((p,i)=>({c:p==='Lainnya'?'#9CA3AF':GEO_COL[i%GEO_COL.length],l:p})));
+}
+$('#geoProvSearch').oninput=()=>{ if(GEO) renderGeoProv(); };
+$('#geoCitySearch').oninput=()=>{ if(GEO) renderGeoCity(); };
+$('#geoMonthMode').onchange=()=>{ if(GEO&&GEO.totals) renderGeoMonth(); };
+$('#btnGeoX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/geo.xlsx?'+qs({platform:$('#platform').value}); };
 
 function renderDetail(){
   const B=DATA.breakdown;

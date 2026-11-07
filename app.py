@@ -863,7 +863,7 @@ def api_produk_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = No
 # ---------------------------------------------------------------- pelanggan berulang
 
 def _ensure_buyer_cols(toko):
-    """File pesanan yang diunggah sebelum parser menyimpan identitas pembeli diparse ulang dari arsip (sekali saja per file)."""
+    """File pesanan yang diunggah sebelum parser menyimpan identitas pembeli / wilayah diparse ulang dari arsip (sekali saja per file)."""
     if not db.uploads_needing_buyer(toko):
         return 0, []
     with _lock:
@@ -895,6 +895,37 @@ def api_repeat_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = No
     wb = analysis.export_repeat_xlsx(toko, O, platform, m_from, m_to)
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     name = f"Pelanggan berulang {toko} {platform} {m_from or ''}-{m_to or ''}.xlsx".replace("  ", " ")
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# ---------------------------------------------------------------- demografi wilayah pembeli
+
+@app.get("/api/geo")
+def api_geo(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
+            d_from: Optional[str] = None, d_to: Optional[str] = None):
+    if toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{toko}' tidak ada")
+    done, missing = _ensure_buyer_cols(toko)
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    res = analysis.geo_customers(O, platform, m_from, m_to)
+    res["reparsed"] = done
+    res["reparse_missing"] = missing
+    return JSONResponse(clean(res))
+
+
+@app.get("/api/geo.xlsx")
+def api_geo_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
+                 d_from: Optional[str] = None, d_to: Optional[str] = None):
+    if toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{toko}' tidak ada")
+    _ensure_buyer_cols(toko)
+    O, I, A, files, raw = get_data(toko)
+    O, I = analysis.filter_dates(O, I, d_from, d_to)
+    wb = analysis.export_geo_xlsx(toko, O, platform, m_from, m_to)
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    name = f"Wilayah pembeli {toko} {platform} {m_from or ''}-{m_to or ''}.xlsx".replace("  ", " ")
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -1219,7 +1250,7 @@ def _cli(argv):
     """python3 app.py adduser <nama> [--admin] | passwd <nama> | users | export-arsip (tulis hpp/ads JSON ke folder arsip)
     | mail-dns (record DNS pengirim email: DKIM/SPF/DMARC) | mail-test <email> (kirim email percobaan)
     | tiket (daftar tiket) | tiket <id> (isi tiket + path lampiran) | tiket-balas <id> <teks> (balas sebagai Tim Sales Akrual)
-    | tiket-status <id> open|answered|closed | reingest [toko] (parse ulang file yang diproses parser lama: kolom pembeli, kolom refund TikTok; semua workspace)"""
+    | tiket-status <id> open|answered|closed | reingest [toko] (parse ulang file yang diproses parser lama: kolom pembeli, wilayah, refund TikTok; semua workspace)"""
     import getpass
     cmd = argv[0]
     if cmd == "reingest":

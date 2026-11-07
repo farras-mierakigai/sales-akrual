@@ -1142,3 +1142,246 @@ def export_repeat_xlsx(toko, O, platform="all", m_from=None, m_to=None):
           [[t["channel"], t["buyer"], t["orders"], t["orders_total"], t["qty"], t["bruto"], t["first"], t["last"], t["span_days"], t["gap_avg"], t["product"], hab(t.get("habit"))]
            for t in R["top"]])
     return wb
+
+
+# ---------------------------------------------------------------- demografi wilayah pembeli (provinsi / kota / pulau)
+
+REGIONS = [
+    ("Jawa", ["DKI Jakarta", "Jawa Barat", "Banten", "Jawa Tengah", "DI Yogyakarta", "Jawa Timur"]),
+    ("Sumatera", ["Aceh", "Sumatera Utara", "Sumatera Barat", "Riau", "Kepulauan Riau", "Jambi", "Sumatera Selatan",
+                  "Kepulauan Bangka Belitung", "Bengkulu", "Lampung"]),
+    ("Kalimantan", ["Kalimantan Barat", "Kalimantan Tengah", "Kalimantan Selatan", "Kalimantan Timur", "Kalimantan Utara"]),
+    ("Sulawesi", ["Sulawesi Utara", "Gorontalo", "Sulawesi Tengah", "Sulawesi Barat", "Sulawesi Selatan", "Sulawesi Tenggara"]),
+    ("Bali & Nusa Tenggara", ["Bali", "Nusa Tenggara Barat", "Nusa Tenggara Timur"]),
+    ("Maluku & Papua", ["Maluku", "Maluku Utara", "Papua", "Papua Barat", "Papua Tengah", "Papua Pegunungan", "Papua Selatan", "Papua Barat Daya"]),
+]
+REGION_OF = {p: r for r, ps in REGIONS for p in ps}
+REGION_OTHER = "Tidak dikenali"
+JABODETABEK = {"Kota Bogor", "Kab. Bogor", "Kota Depok", "Kota Tangerang", "Kab. Tangerang", "Kota Tangerang Selatan", "Kota Bekasi", "Kab. Bekasi"}
+AREA_LABELS = ["Jabodetabek", "Jawa di luar Jabodetabek", "Luar Jawa"]
+GEO_TOP_PROV_CHART = 8      # provinsi yang digambar sendiri di grafik per bulan (sisanya "Lainnya")
+GEO_TOP_PROV_PRODUCT = 10   # provinsi untuk tabel produk favorit
+GEO_TOP_PRODUCT = 5         # produk per provinsi
+GEO_MATRIX_PRODUCTS = 12    # produk di matriks produk × provinsi
+
+
+def _area_of(province, city):
+    if province == "DKI Jakarta" or city in JABODETABEK:
+        return AREA_LABELS[0]
+    if REGION_OF.get(province) == "Jawa":
+        return AREA_LABELS[1]
+    return AREA_LABELS[2]
+
+
+def _geo_orders(O):
+    """Satu baris per ORDER terjual (non-batal, non-retur, sudah bayar) beserta provinsi, kota, dan pembeli."""
+    sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])]
+    cols = ["channel", "order_id", "province", "city", "buyer_key", "created", "month", "bruto", "qty", "product"]
+    if not len(sold):
+        return pd.DataFrame(columns=cols)
+    for c in ("province", "city", "buyer_key"):
+        sold = sold.assign(**{c: sold[c].fillna("").astype(str) if c in sold else ""})
+    # baris yang punya wilayah didahulukan supaya 'first' mengambil nilai yang terisi
+    sold = sold.assign(_noprov=(sold["province"] == "")).sort_values("_noprov", kind="stable")
+    od = sold.groupby(["channel", "order_id"], sort=False).agg(
+        province=("province", "first"), city=("city", "first"), buyer_key=("buyer_key", "first"), created=("created", "min"),
+        month=("month", "first"), bruto=("bruto", "sum"), qty=("qty", "sum"), product=("product", "first")).reset_index()
+    return od
+
+
+_CITY_TYPE = re.compile(r"^(Kota|Kab\.) ")
+
+
+def _merge_bare_cities(od):
+    """Kota tanpa jenis ('Bogor', dari export TikTok lama) digabung ke 'Kota Bogor'/'Kab. Bogor' bila di provinsi itu hanya ada satu;
+    kalau dua-duanya ada (kota & kabupaten) tetap dipisah dengan tanda '(?)' karena tidak bisa dipastikan."""
+    if not len(od):
+        return od
+    typed = od[od["city"].str.match(_CITY_TYPE)]
+    bare = od[(od["city"] != "") & ~od["city"].str.match(_CITY_TYPE)]
+    if not len(bare):
+        return od
+    cand = typed.assign(base=typed["city"].str.replace(_CITY_TYPE, "", regex=True)).groupby(["province", "base"])["city"].agg(lambda s: sorted(set(s)))
+    mp = {}
+    for prov, name in bare[["province", "city"]].drop_duplicates().itertuples(index=False):
+        c = cand.get((prov, name))
+        mp[(prov, name)] = c[0] if c is not None and len(c) == 1 else name + " (?)"
+    key = list(zip(od["province"], od["city"]))
+    od = od.assign(city=[mp.get(k, k[1]) for k in key])
+    return od
+
+
+def _geo_group(df, by, total_orders, total_bruto, label_col=None):
+    """Agregasi per wilayah → list dict terurut jumlah order."""
+    if not len(df):
+        return []
+    g = df.groupby(by, sort=False)
+    rows = g.agg(orders=("order_id", "nunique"), bruto=("bruto", "sum"), qty=("qty", "sum"),
+                 customers=("ckey", lambda s: int(s[s != ""].nunique())))
+    for ch, key in ((SHOPEE, "shopee"), (TIKTOK, "tiktok"), (TOKOPEDIA, "tokopedia")):
+        rows[key] = df[df["channel"] == ch].groupby(by)["order_id"].nunique().reindex(rows.index).fillna(0).astype(int)
+    # pelanggan yang beli ≥2× di periode & wilayah ini
+    per = df[df["ckey"] != ""].groupby(by + ["ckey"])["order_id"].nunique()
+    rep = per[per >= 2].groupby(level=list(range(len(by)))).size() if len(per) else pd.Series(dtype=int)
+    rows["repeat_customers"] = rep.reindex(rows.index).fillna(0).astype(int)
+    rows = rows.sort_values(["orders", "bruto"], ascending=[False, False])
+    out = []
+    for idx, r in rows.iterrows():
+        idx = idx if isinstance(idx, tuple) else (idx,)
+        d = dict(zip(by, idx))
+        o, b = int(r["orders"]), float(r["bruto"])
+        d.update(orders=o, orders_pct=round(100 * o / total_orders, 1) if total_orders else 0.0,
+                 bruto=b, bruto_pct=round(100 * b / total_bruto, 1) if total_bruto else 0.0,
+                 qty=float(r["qty"]), customers=int(r["customers"]), aov=round(b / o) if o else 0.0,
+                 shopee=int(r["shopee"]), tiktok=int(r["tiktok"]), tokopedia=int(r["tokopedia"]),
+                 repeat_customers=int(r["repeat_customers"]),
+                 repeat_pct=round(100 * float(r["repeat_customers"]) / float(r["customers"]), 1) if r["customers"] else 0.0)
+        out.append(d)
+    return out
+
+
+def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60):
+    """Demografi wilayah pembeli: sebaran order/bruto/pelanggan per pulau, kawasan, provinsi, kota; tren bulanan; produk favorit per provinsi.
+
+    Basis = order TERJUAL (non-batal, non-retur, sudah bayar) dari file pesanan, dibatasi periode. Wilayah = alamat pengiriman
+    (kolom Provinsi & Kota/Kabupaten di Order.all Shopee; Province & Regency and City di Semua Pesanan TikTok — export TikTok
+    sebelum ±Nov 2025 tidak memuat kolom itu → order tanpa wilayah dilaporkan terpisah). Pelanggan = kunci pembeli per channel
+    (tidak bisa dicocokkan lintas platform); provinsi/kota diambil dari order, jadi pelanggan yang pindah alamat dihitung di
+    tiap wilayah yang pernah ia pakai.
+    """
+    O = _channel_filter(O, platform)
+    empty = dict(totals=None, regions=[], areas=[], provinces=[], cities=[], months=[], monthly=[], monthly_provinces=[],
+                 products=[], matrix=None, has_geo=False, no_geo=0, no_geo_bruto=0.0)
+    if not len(O):
+        return empty
+    od = _geo_orders(O)
+    if m_from:
+        od = od[od["month"] >= m_from]
+    if m_to:
+        od = od[od["month"] <= m_to]
+    if not len(od):
+        return empty
+    empty["has_geo"] = bool((od["province"] != "").any())
+    nogeo = od[od["province"] == ""]
+    empty["no_geo"] = int(len(nogeo))
+    empty["no_geo_bruto"] = float(nogeo["bruto"].sum())
+    od = od[od["province"] != ""].copy()
+    if not len(od):
+        return empty
+    od = _merge_bare_cities(od)
+    od["ckey"] = (od["channel"] + "|" + od["buyer_key"]).where(od["buyer_key"] != "", "")
+    od["region"] = od["province"].map(REGION_OF).fillna(REGION_OTHER)
+    od["area"] = [_area_of(p, c) for p, c in zip(od["province"], od["city"])]
+    orders = int(od["order_id"].nunique())
+    bruto = float(od["bruto"].sum())
+    customers = int(od.loc[od["ckey"] != "", "ckey"].nunique())
+    all_orders = orders + empty["no_geo"]
+    totals = dict(orders=orders, bruto=bruto, qty=float(od["qty"].sum()), customers=customers, aov=round(bruto / orders) if orders else 0.0,
+                  provinces=int(od["province"].nunique()), cities=int(od.loc[od["city"] != "", "city"].nunique()),
+                  coverage_pct=round(100 * orders / all_orders, 1) if all_orders else 0.0)
+
+    regions = _geo_group(od, ["region"], orders, bruto)
+    order_r = {r: i for i, (r, _) in enumerate(REGIONS)}
+    regions.sort(key=lambda r: order_r.get(r["region"], 99))
+    areas = _geo_group(od, ["area"], orders, bruto)
+    areas.sort(key=lambda r: AREA_LABELS.index(r["area"]) if r["area"] in AREA_LABELS else 99)
+    provinces = _geo_group(od, ["province"], orders, bruto)
+    for p in provinces:
+        p["region"] = REGION_OF.get(p["province"], REGION_OTHER)
+    with_city = od[od["city"] != ""]
+    cities = _geo_group(with_city, ["province", "city"], orders, bruto)
+    totals["cities_total"] = len(cities)
+    cities = cities[:top_city] if top_city else cities
+
+    # per bulan: order & bruto per provinsi teratas (+ Lainnya) → grafik komposisi
+    months = sorted(m for m in od["month"].dropna().unique() if m and m != "NaT")
+    top_prov = [p["province"] for p in provinces[:GEO_TOP_PROV_CHART]]
+    od["prov_chart"] = od["province"].where(od["province"].isin(top_prov), "Lainnya")
+    monthly = []
+    for m in months:
+        x = od[od["month"] == m]
+        bo = x.groupby("prov_chart")["order_id"].nunique()
+        bb = x.groupby("prov_chart")["bruto"].sum()
+        monthly.append(dict(month=m, orders=int(x["order_id"].nunique()), bruto=float(x["bruto"].sum()),
+                            customers=int(x.loc[x["ckey"] != "", "ckey"].nunique()), provinces=int(x["province"].nunique()),
+                            by_orders={k: int(v) for k, v in bo.items()}, by_bruto={k: float(v) for k, v in bb.items()}))
+    monthly_provinces = top_prov + (["Lainnya"] if (od["prov_chart"] == "Lainnya").any() else [])
+
+    # produk favorit per provinsi: dari BARIS item (satu order bisa berisi beberapa produk), provinsi diambil dari order-nya;
+    # nama produk dikelompokkan dari judul listing seperti tab Pelanggan berulang
+    sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])][["channel", "order_id", "product", "bruto"]]
+    L = sold.merge(od[["channel", "order_id", "province", "prov_chart"]], on=["channel", "order_id"], how="inner")
+    L["pname"] = product_names(L["product"])
+    products = []
+    for prov in [p["province"] for p in provinces[:GEO_TOP_PROV_PRODUCT]]:
+        x = L[L["province"] == prov]
+        n = int(od[od["province"] == prov]["order_id"].nunique())
+        g = x.groupby("pname").agg(orders=("order_id", "nunique"), bruto=("bruto", "sum")).sort_values(["orders", "bruto"], ascending=[False, False])
+        for name, r in g.head(GEO_TOP_PRODUCT).iterrows():
+            products.append(dict(province=prov, product=name, orders=int(r["orders"]), bruto=float(r["bruto"]),
+                                 pct=round(100 * float(r["orders"]) / n, 1) if n else 0.0))
+
+    # matriks produk × provinsi: % order produk itu yang jatuh di tiap provinsi, dibanding sebaran semua order (baseline)
+    matrix = None
+    if len(top_prov):
+        gp = L.groupby("pname")["order_id"].nunique().sort_values(ascending=False).head(GEO_MATRIX_PRODUCTS)
+        base = {p: round(100 * od[od["province"] == p]["order_id"].nunique() / orders, 1) for p in top_prov}
+        base["Lainnya"] = round(100 - sum(base.values()), 1) if "Lainnya" in monthly_provinces else None
+        rows = []
+        for name, n in gp.items():
+            x = L[L["pname"] == name]
+            share = {}
+            for p in monthly_provinces:
+                k = int(x[x["prov_chart"] == p]["order_id"].nunique())
+                share[p] = round(100 * k / n, 1) if n else 0.0
+            rows.append(dict(product=name, orders=int(n), share=share))
+        matrix = dict(provinces=monthly_provinces, baseline={p: base.get(p) for p in monthly_provinces}, rows=rows)
+
+    empty.update(totals=totals, regions=regions, areas=areas, provinces=provinces, cities=cities, months=months, monthly=monthly,
+                 monthly_provinces=monthly_provinces, products=products, matrix=matrix)
+    return empty
+
+
+def export_geo_xlsx(toko, O, platform="all", m_from=None, m_to=None):
+    """Excel demografi wilayah: pulau, kawasan, SEMUA provinsi & kota, per bulan, produk favorit per provinsi, matriks produk × provinsi."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    G = geo_customers(O, platform, m_from, m_to, top_city=0)
+    wb = Workbook()
+    bold = Font(bold=True)
+
+    def sheet(title, header, rows, first=False):
+        ws = wb.active if first else wb.create_sheet()
+        ws.title = title[:31]
+        ws.append(header)
+        for c in ws[1]:
+            c.font = bold
+        for r in rows:
+            ws.append(r)
+        ws.freeze_panes = "A2"
+        return ws
+
+    K = ["orders", "orders_pct", "bruto", "bruto_pct", "qty", "customers", "aov", "shopee", "tiktok", "tokopedia", "repeat_customers", "repeat_pct"]
+    H = ["Order", "% order", "Bruto", "% bruto", "Qty", "Pelanggan", "Rata-rata/order", "Order Shopee", "Order TikTok", "Order Tokopedia",
+         "Pelanggan beli ≥2×", "% beli ≥2×"]
+    T = G["totals"] or {}
+    sheet("Ringkasan", ["Keterangan", "Nilai"],
+          [["Order terjual dengan wilayah", T.get("orders")], ["Bruto", T.get("bruto")], ["Pelanggan", T.get("customers")],
+           ["Provinsi", T.get("provinces")], ["Kota/kabupaten", T.get("cities")], ["% order yang punya wilayah", T.get("coverage_pct")],
+           ["Order tanpa wilayah (export lama)", G["no_geo"]], ["Bruto tanpa wilayah", G["no_geo_bruto"]]], first=True)
+    sheet("Pulau", ["Pulau"] + H, [[r["region"]] + [r.get(k) for k in K] for r in G["regions"]])
+    sheet("Kawasan", ["Kawasan"] + H, [[r["area"]] + [r.get(k) for k in K] for r in G["areas"]])
+    sheet("Provinsi", ["Provinsi", "Pulau"] + H, [[r["province"], r["region"]] + [r.get(k) for k in K] for r in G["provinces"]])
+    sheet("Kota", ["Kota/Kabupaten", "Provinsi"] + H, [[r["city"], r["province"]] + [r.get(k) for k in K] for r in G["cities"]])
+    MP = G["monthly_provinces"]
+    sheet("Per bulan (order)", ["Bulan", "Order", "Bruto", "Pelanggan", "Provinsi aktif"] + MP,
+          [[m["month"], m["orders"], m["bruto"], m["customers"], m["provinces"]] + [m["by_orders"].get(p, 0) for p in MP] for m in G["monthly"]])
+    sheet("Per bulan (bruto)", ["Bulan"] + MP, [[m["month"]] + [m["by_bruto"].get(p, 0.0) for p in MP] for m in G["monthly"]])
+    sheet("Produk per provinsi", ["Provinsi", "Produk", "Order", "% order provinsi", "Bruto"],
+          [[p["province"], p["product"], p["orders"], p["pct"], p["bruto"]] for p in G["products"]])
+    M = G["matrix"]
+    if M:
+        sheet("Produk x Provinsi (%)", ["Produk", "Order"] + M["provinces"],
+              [["(semua order)", T.get("orders")] + [M["baseline"].get(p) for p in M["provinces"]]]
+              + [[r["product"], r["orders"]] + [r["share"].get(p) for p in M["provinces"]] for r in M["rows"]])
+    return wb
