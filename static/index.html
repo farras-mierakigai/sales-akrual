@@ -753,12 +753,10 @@ function render(){
 }
 
 async function renderChannelChart(labels){
-  const base=qs();
   const months=DATA.rows.map(r=>r.month); const ds=[];
   for(const [p,name] of [['shopee','Shopee'],['tiktok','TikTok'],['tokopedia','Tokopedia']]){
     if(!DATA.by_platform||!DATA.by_platform[p]) continue;
-    const q=new URLSearchParams(base); q.set('platform',p);
-    const r=await api('/api/summary?'+q); const m=Object.fromEntries(r.rows.map(x=>[x.month,x.bruto]));
+    const m=(DATA.by_platform_months||{})[p]||{};
     ds.push({label:name,data:months.map(x=>m[x]||0),backgroundColor:COL[name],borderRadius:4,borderSkipped:'bottom'});
   }
   mkChart('chChannel',{type:'bar',data:{labels,datasets:ds},options:Object.assign(baseOpts(),{scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,grid:{color:'#EEE'},border:{display:false},ticks:{callback:v=>fmtJt(v)}}}})});

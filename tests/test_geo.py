@@ -185,7 +185,7 @@ def test_api_geo_and_reparse_old_upload():
     with eng.begin() as cx:
         cx.execute(sa.text("UPDATE upload SET parser_version='13' WHERE file='Order.all.api.xlsx'"))
         cx.execute(sa.text("UPDATE order_line SET province=NULL, city=NULL, district=NULL"))
-    appmod._cache.clear()
+    appmod.fastcache.forget(db.current_ws(), TOKO)   # data diubah langsung lewat SQL (tanpa bump versi)
     assert db.uploads_needing_buyer(TOKO) == ["Order.all.api.xlsx"]
     g2 = c.get("/api/geo", params=dict(toko=TOKO)).json()
     assert g2["reparsed"] == 1 and g2["totals"]["orders"] == 2 and g2["totals"]["provinces"] == 2 and g2["totals"]["districts_total"] == 2

@@ -7,6 +7,7 @@ import io
 import sys
 import shutil
 import glob
+import json
 import math
 import secrets
 import threading
@@ -26,6 +27,7 @@ import mailer
 import hpp as hppmod
 import ads as adsmod
 import parsers
+import fastcache
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Sales Akrual", docs_url=None, redoc_url=None, openapi_url=None)
@@ -321,9 +323,7 @@ def api_admin_ws_delete(id: int, request: Request):
         db.ws_delete(id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    with _lock:
-        for k in [k for k in _cache if k[0] == id]:
-            _cache.pop(k, None)
+    fastcache.forget_ws(id)
     return dict(ok=True)
 
 
@@ -625,8 +625,7 @@ def api_users_delete(name: str, request: Request):
 def healthz():
     return dict(ok=True)
 
-_lock = threading.Lock()
-_cache = {}  # toko -> (signature, (O, I, A, files))
+_lock = threading.Lock()      # reingest file lama (sekali per file)
 
 
 def clean(x):
@@ -646,22 +645,18 @@ def clean(x):
     return str(x)
 
 
-def _signature(toko):
-    return db.version(toko)
-
-
 def get_data(toko):
+    """Data toko (O, I, A, files, raw) — dari memori / snapshot disk / Postgres (lihat fastcache)."""
     if toko not in analysis.list_toko():
         raise HTTPException(404, f"toko '{toko}' tidak ada")
-    sig = _signature(toko)
-    key = (db.current_ws(), toko)      # cache per workspace: nama toko boleh sama di workspace berbeda
-    with _lock:
-        hit = _cache.get(key)
-        if hit and hit[0] == sig:
-            return hit[1]
-        data = analysis.load_toko(toko)
-        _cache[key] = (sig, data)
-        return data
+    return fastcache.frames(toko)
+
+
+def cached(kind, toko, params, compute):
+    """Respons JSON dari cache hasil (kunci: versi data toko + versi kode + parameter); hitung bila belum ada."""
+    if toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{toko}' tidak ada")
+    return Response(fastcache.result(kind, toko, params, lambda: clean(compute())), media_type="application/json")
 
 
 @app.get("/")
@@ -722,14 +717,13 @@ def api_toko_delete(toko: str, request: Request):
     if not db.delete_toko(toko):
         raise HTTPException(404, "toko tidak ada")
     shutil.rmtree(analysis.toko_dir(toko), ignore_errors=True)
-    _cache.pop((db.current_ws(), toko), None)
+    fastcache.forget(db.current_ws(), toko)
     return dict(ok=True)
 
 
 @app.get("/api/files")
 def api_files(toko: str):
-    O, I, A, files, raw = get_data(toko)
-    return clean(files)
+    return cached("files", toko, {}, lambda: get_data(toko)[3])
 
 
 @app.delete("/api/files")
@@ -828,6 +822,11 @@ def api_import(body: ImportIn):
 @app.get("/api/summary")
 def api_summary(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
                 d_from: Optional[str] = None, d_to: Optional[str] = None):
+    return cached("summary", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to),
+                  lambda: summary_data(toko, platform, m_from, m_to, d_from, d_to))
+
+
+def summary_data(toko, platform="all", m_from=None, m_to=None, d_from=None, d_to=None):
     O, I, A, files, raw = get_data(toko)
     O, I = analysis.filter_dates(O, I, d_from, d_to)
     U = raw.get("unsettled")
@@ -837,15 +836,17 @@ def api_summary(toko: str, platform: str = "all", m_from: Optional[str] = None, 
     res["unsettled_status"] = analysis.unsettled_by_status(O, I, platform, m_from, m_to, U)
     res["adjustments"] = analysis.adjustments(A, m_from, m_to) if platform in ("all", "tiktok", "tiktok_all", "tokopedia") else []
     res["reconcile"] = analysis.reconcile(analysis._channel_filter(O, platform), analysis._channel_filter(I, platform))
-    res["all_months"] = sorted(set(O["month"].dropna())) if len(O) else []
+    res["all_months"] = sorted(O["month"].dropna().unique()) if len(O) else []
     res["files"] = files
-    # per-platform mini totals untuk tab ringkasan
+    # per-platform: total untuk tab ringkasan + bruto per bulan untuk grafik per channel (dulu 3 request summary tambahan)
     res["by_platform"] = {}
+    res["by_platform_months"] = {}
     for p in ("shopee", "tiktok", "tokopedia"):
-        t = analysis.monthly(O, I, p, m_from, m_to, U, ADS, d_from, d_to)["totals"]
-        if t:
-            res["by_platform"][p] = t
-    return JSONResponse(clean(res))
+        mp = analysis.monthly(O, I, p, m_from, m_to, U, ADS, d_from, d_to)
+        if mp["totals"]:
+            res["by_platform"][p] = mp["totals"]
+            res["by_platform_months"][p] = {r["month"]: r["bruto"] for r in mp["rows"]}
+    return res
 
 
 @app.get("/api/produk.xlsx")
@@ -870,18 +871,30 @@ def _ensure_buyer_cols(toko):
         return db.reingest_old_orders(toko)
 
 
+def _with_reparse(resp, done, missing):
+    """Info reparse file lama ditempel di luar cache (hanya relevan di request yang melakukannya)."""
+    body = resp.body
+    head = json.dumps(dict(reparsed=done, reparse_missing=missing), ensure_ascii=False, separators=(",", ":")).encode()
+    if body[:1] == b"{" and body[1:2] != b"}":
+        body = head[:-1] + b"," + body[1:]
+    elif body[:1] == b"{":
+        body = head
+    return Response(body, media_type="application/json")
+
+
 @app.get("/api/repeat")
 def api_repeat(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
                d_from: Optional[str] = None, d_to: Optional[str] = None):
     if toko not in analysis.list_toko():
         raise HTTPException(404, f"toko '{toko}' tidak ada")
     done, missing = _ensure_buyer_cols(toko)
-    O, I, A, files, raw = get_data(toko)
-    O, I = analysis.filter_dates(O, I, d_from, d_to)
-    res = analysis.repeat_customers(O, platform, m_from, m_to)
-    res["reparsed"] = done
-    res["reparse_missing"] = missing
-    return JSONResponse(clean(res))
+
+    def compute():
+        O, I, A, files, raw = get_data(toko)
+        O, I = analysis.filter_dates(O, I, d_from, d_to)
+        return analysis.repeat_customers(O, platform, m_from, m_to)
+    return _with_reparse(cached("repeat", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to), compute),
+                         done, missing)
 
 
 @app.get("/api/repeat.xlsx")
@@ -907,12 +920,13 @@ def api_geo(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to
     if toko not in analysis.list_toko():
         raise HTTPException(404, f"toko '{toko}' tidak ada")
     done, missing = _ensure_buyer_cols(toko)
-    O, I, A, files, raw = get_data(toko)
-    O, I = analysis.filter_dates(O, I, d_from, d_to)
-    res = analysis.geo_customers(O, platform, m_from, m_to)
-    res["reparsed"] = done
-    res["reparse_missing"] = missing
-    return JSONResponse(clean(res))
+
+    def compute():
+        O, I, A, files, raw = get_data(toko)
+        O, I = analysis.filter_dates(O, I, d_from, d_to)
+        return analysis.geo_customers(O, platform, m_from, m_to)
+    return _with_reparse(cached("geo", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to), compute),
+                         done, missing)
 
 
 @app.get("/api/geo.xlsx")
@@ -947,10 +961,12 @@ def api_export(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = No
 
 @app.get("/api/ads")
 def api_ads(toko: str):
-    O, I, A, files, raw = get_data(toko)
-    data = adsmod.load(toko)
-    data["data_months"] = sorted(set(O["month"].dropna())) if len(O) else []
-    return JSONResponse(clean(data))
+    def compute():
+        O = get_data(toko)[0]
+        data = adsmod.load(toko)
+        data["data_months"] = sorted(set(O["month"].dropna())) if len(O) else []
+        return data
+    return cached("ads", toko, {}, compute)
 
 
 class AdsIn(BaseModel):
@@ -972,9 +988,11 @@ def api_ads_save(body: AdsIn):
 
 @app.get("/api/hpp")
 def api_hpp(toko: str):
-    O, I, A, files, raw = get_data(toko)
-    master, mapping = hppmod.load(toko)
-    return JSONResponse(clean(dict(master=master, mapping=mapping, table=hppmod.mapping_table(O, toko))))
+    def compute():
+        O = get_data(toko)[0]
+        master, mapping = hppmod.load(toko)
+        return dict(master=master, mapping=mapping, table=hppmod.mapping_table(O, toko))
+    return cached("hpp", toko, {}, compute)
 
 
 class HppImportIn(BaseModel):
@@ -1054,12 +1072,13 @@ def api_hpp_col(body: HppColIn):
 
 @app.get("/api/audit")
 def api_audit(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = None, d_from: Optional[str] = None, d_to: Optional[str] = None):
-    O, I, A, files, raw = get_data(toko)
-    O, I = analysis.filter_dates(O, I, d_from, d_to)
-    res = dict(coverage=audit.coverage(O, I, m_from, m_to),
-               reconcile=audit.reconcile_files(raw, files),
-               **audit.findings(O, I, raw, m_from, m_to))
-    return JSONResponse(clean(res))
+    def compute():
+        O, I, A, files, raw = get_data(toko)
+        O, I = analysis.filter_dates(O, I, d_from, d_to)
+        return dict(coverage=audit.coverage(O, I, m_from, m_to),
+                    reconcile=audit.reconcile_files(raw, files),
+                    **audit.findings(O, I, raw, m_from, m_to))
+    return cached("audit", toko, dict(m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to), compute)
 
 
 @app.get("/api/trace")
@@ -1363,4 +1382,6 @@ if __name__ == "__main__":
         print(f"email: kirim langsung sebagai {mailer.from_addr()} — TXT {mailer.selector()}._domainkey.{mailer.from_domain()} = {mailer.dkim_txt() or 'GAGAL membuat kunci'}")
     else:
         print(f"email: mode {mailer.mode()}")
+    if os.environ.get("SA_WARM", "1") != "0":
+        fastcache.start_warmer([lambda t: api_files(t), lambda t: api_summary(t), lambda t: api_repeat(t), lambda t: api_geo(t)])
     uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*", server_header=False)

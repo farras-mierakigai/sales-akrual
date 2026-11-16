@@ -2,6 +2,7 @@
 import os
 import glob
 import re
+import numpy as np
 import pandas as pd
 import parsers
 import db
@@ -96,7 +97,7 @@ def load_toko(toko):
     # dedup: baris sama di beberapa export → ambil dari file terbaru (status paling mutakhir)
     if len(O):
         O = O.sort_values("file_mtime").drop_duplicates("line_key", keep="last").reset_index(drop=True)
-        O["month"] = O["created"].dt.strftime("%Y-%m")
+        O["month"] = _ym(O["created"])
     if len(I):
         I = I.sort_values("file_mtime").drop_duplicates("line_key", keep="last").reset_index(drop=True)
     # aturan Farras 2026-10-08: dana dikembalikan penuh = retur → keluar dari bruto walau status non-batal
@@ -117,6 +118,37 @@ def full_refund_ids(I):
         return set()
     g = I.groupby("order_id").agg(h=("harga_produk", "sum"), r=("refund", "sum"))
     return set(g[(g["h"] > 0) & (g["r"] <= -0.99 * g["h"])].index)
+
+
+def _ym(s, unit="M"):
+    """= s.dt.strftime("%Y-%m") (unit "M") / "%Y-%m-%d" (unit "D"), NaT → NaN — tapi yang diformat hanya nilai uniknya
+    (jutaan baris → puluhan/ratusan string), jauh lebih cepat."""
+    fmt = "%Y-%m" if unit == "M" else "%Y-%m-%d"
+    if not len(s) or str(s.dtype) != "datetime64[ns]":
+        return s.dt.strftime(fmt)
+    codes, uniq = pd.factorize(s.values.astype(f"datetime64[{unit}]"))
+    lab = pd.DatetimeIndex(uniq).strftime(fmt).to_numpy(dtype=object)
+    out = np.full(len(codes), np.nan, dtype=object)
+    ok = codes >= 0
+    out[ok] = lab[codes[ok]]
+    return pd.Series(out, index=s.index, name=s.name)
+
+
+def _group_min_str(keys, s):
+    """= s.groupby(keys).transform("min") untuk kolom teks (mis. "YYYY-MM"), lewat kode angka berurutan supaya tidak jatuh
+    ke jalur Python per kelompok (ratusan ribu pelanggan → puluhan detik)."""
+    codes, uniq = pd.factorize(s, sort=True)
+    big = len(uniq)
+    m = pd.Series(np.where(codes < 0, big, codes), index=s.index).groupby(keys.values).transform("min").to_numpy()
+    out = np.full(len(m), np.nan, dtype=object)
+    ok = m < big
+    out[ok] = np.asarray(uniq, dtype=object)[m[ok]]
+    return pd.Series(out, index=s.index, name=s.name)
+
+
+def _cols(df, cols):
+    """Hanya kolom yang dipakai (kolom yang tidak ada dilewati) → filter/salin baris jauh lebih ringan."""
+    return df[[c for c in cols if c in df.columns]] if len(df.columns) else df
 
 
 def filter_dates(O, I, d_from=None, d_to=None):
@@ -184,8 +216,15 @@ def _channel_filter(df, platform):
     return df
 
 
+_MONTHLY_O = ["platform", "channel", "order_id", "month", "is_unpaid", "is_batal", "is_retur", "bruto", "qty", "hpp_unit", "harga_awal"]
+_MONTHLY_I = list(dict.fromkeys(["platform", "channel", "order_id", "created", "is_retur", "neto", "harga_produk", "refund"]
+                                + [k for v in FEE_LINES.values() for k, _ in v] + [k for v in OTHER_LINES.values() for k, _ in v]))
+
+
 def monthly(O, I, platform="all", m_from=None, m_to=None, U=None, ads=None, d_from=None, d_to=None):
     """Tabel per bulan + ringkasan. Semua bulan = bulan order dibuat. U = estimasi resmi TikTok (opsional)."""
+    O = _cols(O, _MONTHLY_O)
+    I = _cols(I, _MONTHLY_I)
     O = _channel_filter(O, platform)
     I = _channel_filter(I, platform)
     if not len(O) and not len(I):
@@ -199,7 +238,7 @@ def monthly(O, I, platform="all", m_from=None, m_to=None, U=None, ads=None, d_fr
             I["month"] = I["order_id"].map(om)
         else:
             I["month"] = None
-        I["month"] = I["month"].fillna(I["created"].dt.strftime("%Y-%m"))
+        I["month"] = I["month"].fillna(_ym(I["created"]))
         I["matched"] = I["order_id"].isin(set(O["order_id"])) if len(O) else False
 
     months = set()
@@ -235,10 +274,13 @@ def monthly(O, I, platform="all", m_from=None, m_to=None, U=None, ads=None, d_fr
     if U is not None and len(U):
         U_est = U.groupby("order_id")["est_neto"].sum().to_dict()
 
+    # pecah per bulan sekali jalan (dulu: satu filter penuh per bulan)
+    o_by = {k: g for k, g in O.groupby("month", sort=False)} if len(O) else {}
+    i_by = {k: g for k, g in I.groupby("month", sort=False)} if len(I) else {}
     rows = []
     for m in months:
-        o = O[O["month"] == m] if len(O) else O
-        i = I[I["month"] == m] if len(I) else I
+        o = o_by.get(m, O.iloc[:0])
+        i = i_by.get(m, I.iloc[:0])
         r = dict(month=m)
         if len(o):
             live = o[~o["is_unpaid"]]
@@ -375,6 +417,8 @@ def monthly(O, I, platform="all", m_from=None, m_to=None, U=None, ads=None, d_fr
 
 def unsettled_by_status(O, I, platform="all", m_from=None, m_to=None, U=None):
     """Order terjual yang belum ada di laporan penghasilan, dipecah per status + taksiran dana."""
+    O = _cols(O, ["platform", "channel", "order_id", "status", "is_unpaid", "is_batal", "is_retur", "month", "bruto", "created"])
+    I = _cols(I, ["platform", "channel", "order_id", "created", "is_retur", "neto", "harga_produk"])
     O = _channel_filter(O, platform)
     I = _channel_filter(I, platform)
     if not len(O):
@@ -389,7 +433,7 @@ def unsettled_by_status(O, I, platform="all", m_from=None, m_to=None, U=None):
     if len(I):
         I = I.copy()
         om = O.drop_duplicates("order_id").set_index("order_id")["month"]
-        I["month"] = I["order_id"].map(om).fillna(I["created"].dt.strftime("%Y-%m"))
+        I["month"] = I["order_id"].map(om).fillna(_ym(I["created"]))
         if "is_retur" in I:
             I = I[~I["is_retur"]]      # rasio neto/bruto tanpa order refund penuh (neto 0, harga produk masih tercantum)
         gp = I.groupby("platform").agg(n=("neto", "sum"), h=("harga_produk", "sum"))
@@ -415,6 +459,8 @@ def _filter_months(df, col, m_from, m_to):
 
 
 def breakdowns(O, I, platform="all", m_from=None, m_to=None, top=40):
+    O = _cols(O, ["platform", "channel", "order_id", "created", "month", "status", "is_unpaid", "is_batal", "is_retur", "product",
+                  "variation", "qty", "bruto", "hpp_unit", "hpp_item", "cancel_reason", "payment"])
     O = _channel_filter(O, platform)
     if not len(O):
         return dict(products=[], status=[], cancel_reasons=[], payment=[], daily=[], channels=[])
@@ -484,7 +530,7 @@ def breakdowns(O, I, platform="all", m_from=None, m_to=None, top=40):
     pm["batal_pct"] = (100 * pm["batal"] / pm["masuk"]).round(1)
     pm = pm.sort_values("masuk", ascending=False).head(12).reset_index()
     # harian
-    d = sold.groupby(sold["created"].dt.strftime("%Y-%m-%d")).agg(bruto=("bruto", "sum"), order=("order_id", "nunique")).reset_index().rename(columns={"created": "date"})
+    d = sold.groupby(_ym(sold["created"], "D")).agg(bruto=("bruto", "sum"), order=("order_id", "nunique")).reset_index().rename(columns={"created": "date"})
     # channel split
     ch = O.groupby("channel").agg(masuk=("order_id", "nunique")).join(sold.groupby("channel").agg(terjual=("order_id", "nunique"), bruto=("bruto", "sum"))).fillna(0).reset_index()
     return dict(products=products, products_total=tot, variants=variants, status=st.to_dict("records"), cancel_reasons=cr.to_dict("records"),
@@ -495,7 +541,7 @@ def adjustments(A, m_from=None, m_to=None):
     if not len(A):
         return []
     A = A.copy()
-    A["month"] = A["settled"].dt.strftime("%Y-%m")
+    A["month"] = _ym(A["settled"])
     if m_from:
         A = A[A["month"] >= m_from]
     if m_to:
@@ -508,6 +554,8 @@ def reconcile(O, I):
     """Cek silang: bruto per order dari file pesanan vs 'harga produk' di laporan penghasilan."""
     if not len(O) or not len(I):
         return dict(matched=0, exact=0, mismatch=[])
+    O = _cols(O, ["order_id", "is_unpaid", "is_batal", "is_retur", "bruto"])
+    I = _cols(I, ["order_id", "harga_produk"])
     sold = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"])]
     ob = sold.groupby("order_id")["bruto"].sum()
     ib = I.groupby("order_id")["harga_produk"].sum()
@@ -780,7 +828,7 @@ def repeat_habits(O, od, sel, top=20):
     L["variation"] = L["variation"].fillna("").astype(str).str.strip()
     L["pkey"] = _norm_key(L["product"])
     L["vkey"] = L["pkey"] + "|" + _norm_key(L["variation"])
-    L = L.merge(od[["channel", "order_id", "ckey", "seq", "month"]], on=["channel", "order_id"], how="inner")
+    L = L.merge(od[["channel", "order_id", "ckey", "seq", "month", "n_total"]], on=["channel", "order_id"], how="inner")
     if not len(L):
         return empty
     empty["has_variation"] = bool((L["variation"] != "").any())
@@ -819,15 +867,19 @@ def repeat_habits(O, od, sel, top=20):
             seen_v.add(vkey)
         items = []
 
-    for r in L.itertuples(index=False):
-        if cur is None or r.ckey != cur["ckey"]:
+    # pelanggan dengan 1 order tidak punya order ulang → tidak perlu ditelusuri (hasilnya sama, jauh lebih cepat)
+    M = L[L["n_total"] > 1]
+    for ckey, channel, order_id, seq, month, pkey, vkey, product, qty, bruto in zip(
+            M["ckey"].tolist(), M["channel"].tolist(), M["order_id"].tolist(), M["seq"].tolist(), M["month"].tolist(),
+            M["pkey"].tolist(), M["vkey"].tolist(), M["product"].tolist(), M["qty"].tolist(), M["bruto"].tolist()):
+        if cur is None or ckey != cur["ckey"]:
             flush(cur)
             seen_p, seen_v = set(), set()
-            cur = dict(ckey=r.ckey, channel=r.channel, order_id=r.order_id, seq=int(r.seq), month=r.month)
-        elif r.order_id != cur["order_id"]:
+            cur = dict(ckey=ckey, channel=channel, order_id=order_id, seq=int(seq), month=month)
+        elif order_id != cur["order_id"]:
             flush(cur)
-            cur = dict(ckey=r.ckey, channel=r.channel, order_id=r.order_id, seq=int(r.seq), month=r.month)
-        items.append((r.pkey, r.vkey, r.product, float(r.qty or 0), float(r.bruto or 0)))
+            cur = dict(ckey=ckey, channel=channel, order_id=order_id, seq=int(seq), month=month)
+        items.append((pkey, vkey, product, float(qty or 0), float(bruto or 0)))
     flush(cur)
     if not orders:
         return empty
@@ -835,9 +887,10 @@ def repeat_habits(O, od, sel, top=20):
     OD = pd.DataFrame(orders)
     LN = pd.DataFrame(lines)
     # kebiasaan per pelanggan (sepanjang data) untuk daftar pelanggan teratas
-    bc = OD.groupby("ckey").agg(n_new=("cat", lambda s: int((s == "new").sum())), n_variant=("cat", lambda s: int((s == "variant").sum())),
-                                n_same=("cat", lambda s: int((s == "same").sum())))
-    empty["by_ckey"] = {k: dict(new=int(r.n_new), variant=int(r.n_variant), same=int(r.n_same)) for k, r in bc.iterrows()}
+    bc = OD[["ckey"]].assign(n_new=OD["cat"].eq("new").astype(int), n_variant=OD["cat"].eq("variant").astype(int),
+                             n_same=OD["cat"].eq("same").astype(int)).groupby("ckey").sum()
+    empty["by_ckey"] = {k: dict(new=int(a), variant=int(b), same=int(c))
+                        for k, a, b, c in zip(bc.index, bc["n_new"].tolist(), bc["n_variant"].tolist(), bc["n_same"].tolist())}
 
     mask = [(c, o) in in_sel for c, o in zip(OD["channel"], OD["order_id"])]
     OD = OD[mask]
@@ -912,8 +965,10 @@ def product_launches(sold, L, sel):
         return out
 
     items = []
+    by_prod = {k: g for k, g in L.groupby(["channel", "pkey"], sort=False)}
     for ch, pk, m, window in launches:
-        x = L[(L["channel"] == ch) & (L["pkey"] == pk) & (L["month"].astype(str).isin(window))]
+        x = by_prod.get((ch, pk), L.iloc[:0])
+        x = x[x["month"].astype(str).isin(window)]
         if not len(x):
             items.append(dict(channel=ch, label=CHANNEL_LABEL.get(ch, ch), product=labels.get((ch, pk), pk), month=m,
                               buyers=0, new=0, old=0, new_pct=0.0, old_pct=0.0, orders=0, bruto=0.0))
@@ -949,6 +1004,8 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=None):
     Urutan order per pelanggan dihitung dari SEMUA data toko, baru dibatasi ke periode terpilih → "pelanggan baru" =
     order pertamanya memang jatuh di periode itu.
     """
+    O = _cols(O, ["platform", "channel", "order_id", "created", "month", "is_unpaid", "is_batal", "is_retur", "buyer_key", "buyer",
+                  "bruto", "qty", "product", "variation"])
     O = _channel_filter(O, platform)
     empty = dict(channels=[], monthly=[], months=[], dist=[], gap=[], cohorts=[], cohort_cols=0, top=[], totals=None,
                  no_id=0, no_id_bruto=0.0, has_buyer=False, habits=None)
@@ -974,7 +1031,7 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=None):
     g = od.groupby("ckey", sort=False)
     od["seq"] = g.cumcount() + 1
     od["n_total"] = g["order_id"].transform("count")
-    od["first_month"] = g["month"].transform("min")
+    od["first_month"] = _group_min_str(od["ckey"], od["month"])
     od["first_created"] = g["created"].transform("min")
     od["last_created"] = g["created"].transform("max")
     od["gap_days"] = (od["created"] - g["created"].shift()).dt.days
@@ -999,8 +1056,9 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=None):
 
     # per bulan: pelanggan baru vs lama (per bulan tiap pelanggan hanya salah satu: bulan order pertamanya = baru)
     monthly = []
+    sel_by = {k: g for k, g in sel.groupby("month", sort=False)}
     for m in months:
-        x = sel[sel["month"] == m]
+        x = sel_by.get(m, sel.iloc[:0])
         per = x.groupby("ckey").agg(first_month=("first_month", "first"), bruto=("bruto", "sum"), n=("order_id", "nunique"))
         new = per[per["first_month"] == m]
         old = per[per["first_month"] != m]
@@ -1037,22 +1095,24 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=None):
         act = od[["ckey", "month", "first_month"]].drop_duplicates(["ckey", "month"])
         act = act[act["month"].notna() & act["first_month"].notna()]
         try:
-            pm = act["month"].map(lambda v: pd.Period(v, "M"))
-            pf = act["first_month"].map(lambda v: pd.Period(v, "M"))
-            act = act.assign(k=(pm - pf).map(lambda d: d.n))
+            def _mi(s):      # "YYYY-MM" → nomor bulan absolut
+                s = s.astype(str)
+                return s.str.slice(0, 4).astype(int) * 12 + s.str.slice(5, 7).astype(int)
+            act = act.assign(k=(_mi(act["month"]) - _mi(act["first_month"])).astype(int))
         except Exception:
             act = act.assign(k=0)
+        sizes = act.groupby("first_month")["ckey"].nunique()
+        nk = act.groupby(["first_month", "k"])["ckey"].nunique()
         last = pd.Period(months[-1], "M")
         for cm in months:
-            c = act[act["first_month"] == cm]
-            size = int(c["ckey"].nunique())
+            size = int(sizes.get(cm, 0))
             if not size:
                 continue
             kmax = min(11, (last - pd.Period(cm, "M")).n)
             cohort_cols = max(cohort_cols, kmax + 1)
             row = dict(cohort=cm, size=size, pct=[])
             for k in range(kmax + 1):
-                n = int(c[c["k"] == k]["ckey"].nunique())
+                n = int(nk.get((cm, k), 0))
                 row["pct"].append(round(100 * n / size, 1))
             cohorts.append(row)
 
@@ -1257,6 +1317,8 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60, top_di
     (tidak bisa dicocokkan lintas platform); provinsi/kota diambil dari order, jadi pelanggan yang pindah alamat dihitung di
     tiap wilayah yang pernah ia pakai.
     """
+    O = _cols(O, ["platform", "channel", "order_id", "is_unpaid", "is_batal", "is_retur", "province", "city", "district", "buyer_key",
+                  "created", "month", "bruto", "qty", "product"])
     O = _channel_filter(O, platform)
     empty = dict(totals=None, regions=[], areas=[], provinces=[], cities=[], districts=[], months=[], monthly=[], monthly_provinces=[],
                  products=[], matrix=None, has_geo=False, no_geo=0, no_geo_bruto=0.0)
