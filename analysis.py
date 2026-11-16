@@ -1280,13 +1280,16 @@ def _geo_group(df, by, total_orders, total_bruto, label_col=None):
     """Agregasi per wilayah → list dict terurut jumlah order."""
     if not len(df):
         return []
+    # _oid / _ck = kode angka order & pelanggan (dibuat di geo_customers) → nunique jauh lebih cepat daripada teks; hasil sama
+    oid = "_oid" if "_oid" in df else "order_id"
     g = df.groupby(by, sort=False)
-    rows = g.agg(orders=("order_id", "nunique"), bruto=("bruto", "sum"), qty=("qty", "sum"),
-                 customers=("ckey", lambda s: int(s[s != ""].nunique())))
+    rows = g.agg(orders=(oid, "nunique"), bruto=("bruto", "sum"), qty=("qty", "sum"))
+    ck = df["_ck"] if "_ck" in df else df["ckey"].where(df["ckey"] != "")
+    rows["customers"] = ck.groupby([df[c] for c in by], sort=False).nunique().reindex(rows.index).fillna(0).astype(int)
     for ch, key in ((SHOPEE, "shopee"), (TIKTOK, "tiktok"), (TOKOPEDIA, "tokopedia")):
-        rows[key] = df[df["channel"] == ch].groupby(by)["order_id"].nunique().reindex(rows.index).fillna(0).astype(int)
+        rows[key] = df[df["channel"] == ch].groupby(by)[oid].nunique().reindex(rows.index).fillna(0).astype(int)
     # pelanggan yang beli ≥2× di periode & wilayah ini
-    per = df[df["ckey"] != ""].groupby(by + ["ckey"])["order_id"].nunique()
+    per = df[df["ckey"] != ""].groupby(by + (["_ck"] if "_ck" in df else ["ckey"]))[oid].nunique()
     rep = per[per >= 2].groupby(level=list(range(len(by)))).size() if len(per) else pd.Series(dtype=int)
     rows["repeat_customers"] = rep.reindex(rows.index).fillna(0).astype(int)
     rows = rows.sort_values(["orders", "bruto"], ascending=[False, False])
@@ -1340,8 +1343,13 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60, top_di
         return empty
     od = _merge_bare_cities(od)
     od["ckey"] = (od["channel"] + "|" + od["buyer_key"]).where(od["buyer_key"] != "", "")
+    od["_oid"] = pd.factorize(od["order_id"])[0]
+    _c = pd.factorize(od["ckey"])[0].astype(float)
+    od["_ck"] = np.where(od["ckey"].to_numpy() == "", np.nan, _c)
     od["region"] = od["province"].map(REGION_OF).fillna(REGION_OTHER)
-    od["area"] = [_area_of(p, c) for p, c in zip(od["province"], od["city"])]
+    pc = list(zip(od["province"], od["city"]))
+    amap = {k: _area_of(*k) for k in set(pc)}
+    od["area"] = [amap[k] for k in pc]
     orders = int(od["order_id"].nunique())
     bruto = float(od["bruto"].sum())
     customers = int(od.loc[od["ckey"] != "", "ckey"].nunique())
@@ -1377,8 +1385,9 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60, top_di
     top_prov = [p["province"] for p in provinces[:GEO_TOP_PROV_CHART]]
     od["prov_chart"] = od["province"].where(od["province"].isin(top_prov), "Lainnya")
     monthly = []
+    od_by_month = {k: g for k, g in od.groupby("month", sort=False)}
     for m in months:
-        x = od[od["month"] == m]
+        x = od_by_month.get(m, od.iloc[:0])
         bo = x.groupby("prov_chart")["order_id"].nunique()
         bb = x.groupby("prov_chart")["bruto"].sum()
         monthly.append(dict(month=m, orders=int(x["order_id"].nunique()), bruto=float(x["bruto"].sum()),
@@ -1392,9 +1401,11 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60, top_di
     L = sold.merge(od[["channel", "order_id", "province", "prov_chart"]], on=["channel", "order_id"], how="inner")
     L["pname"] = product_names(L["product"])
     products = []
+    L_by_prov = {k: g for k, g in L.groupby("province", sort=False)}
+    n_by_prov = od.groupby("province")["order_id"].nunique()
     for prov in [p["province"] for p in provinces[:GEO_TOP_PROV_PRODUCT]]:
-        x = L[L["province"] == prov]
-        n = int(od[od["province"] == prov]["order_id"].nunique())
+        x = L_by_prov.get(prov, L.iloc[:0])
+        n = int(n_by_prov.get(prov, 0))
         g = x.groupby("pname").agg(orders=("order_id", "nunique"), bruto=("bruto", "sum")).sort_values(["orders", "bruto"], ascending=[False, False])
         for name, r in g.head(GEO_TOP_PRODUCT).iterrows():
             products.append(dict(province=prov, product=name, orders=int(r["orders"]), bruto=float(r["bruto"]),
@@ -1404,14 +1415,15 @@ def geo_customers(O, platform="all", m_from=None, m_to=None, top_city=60, top_di
     matrix = None
     if len(top_prov):
         gp = L.groupby("pname")["order_id"].nunique().sort_values(ascending=False).head(GEO_MATRIX_PRODUCTS)
-        base = {p: round(100 * od[od["province"] == p]["order_id"].nunique() / orders, 1) for p in top_prov}
+        base = {p: round(100 * int(n_by_prov.get(p, 0)) / orders, 1) for p in top_prov}
         base["Lainnya"] = round(100 - sum(base.values()), 1) if "Lainnya" in monthly_provinces else None
         rows = []
+        Lt = L[L["pname"].isin(set(gp.index))]
+        kk = Lt.groupby(["pname", "prov_chart"])["order_id"].nunique()
         for name, n in gp.items():
-            x = L[L["pname"] == name]
             share = {}
             for p in monthly_provinces:
-                k = int(x[x["prov_chart"] == p]["order_id"].nunique())
+                k = int(kk.get((name, p), 0))
                 share[p] = round(100 * k / n, 1) if n else 0.0
             rows.append(dict(product=name, orders=int(n), share=share))
         matrix = dict(provinces=monthly_provinces, baseline={p: base.get(p) for p in monthly_provinces}, rows=rows)

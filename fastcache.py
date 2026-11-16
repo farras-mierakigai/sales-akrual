@@ -27,7 +27,7 @@ DIR = os.path.join(analysis.DATA, ".cache")
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _CODE_FILES = ("analysis.py", "audit.py", "hpp.py", "ads.py", "parsers.py", "app.py", "fastcache.py")
 FRAMES_MEM = int(os.environ.get("SA_FRAMES_MEM") or 1)         # berapa toko yang datanya ditahan di memori
-FRAMES_IDLE = int(os.environ.get("SA_FRAMES_IDLE") or 900)     # detik tanpa dipakai → data toko dilepas dari memori
+FRAMES_IDLE = int(os.environ.get("SA_FRAMES_IDLE") or 6 * 3600)   # detik tanpa dipakai → data toko dilepas dari memori
 RESULTS_MEM = int(os.environ.get("SA_RESULTS_MEM_MB") or 256) * 2**20   # total byte hasil JSON di memori (sisanya dibaca dari disk)
 
 
@@ -223,6 +223,31 @@ def result(kind, toko, params, compute):
 
 
 # ---------------------------------------------------------------- pemanasan latar
+
+_prefetch_pool = None
+
+
+def prefetch(fns):
+    """Jalankan fns (hitungan tab lain untuk parameter yang sama) di satu thread latar, berurutan, dengan workspace
+    pemanggil. Hasil masuk cache; permintaan yang datang selagi dihitung menunggu hitungan yang sama (tidak dobel)."""
+    global _prefetch_pool
+    import concurrent.futures
+    import contextvars
+    if os.environ.get("SA_WARM", "1") == "0":
+        return
+    with _glock:
+        if _prefetch_pool is None:
+            _prefetch_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="prefetch")
+    for fn in fns:
+        ctx = contextvars.copy_context()
+
+        def run(fn=fn, ctx=ctx):
+            try:
+                ctx.run(fn)
+            except Exception:
+                traceback.print_exc()
+        _prefetch_pool.submit(run)
+
 
 _warmed = {}          # (ws, toko) -> sig yang sudah dipanaskan
 

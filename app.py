@@ -822,8 +822,12 @@ def api_import(body: ImportIn):
 @app.get("/api/summary")
 def api_summary(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
                 d_from: Optional[str] = None, d_to: Optional[str] = None):
-    return cached("summary", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to),
+    resp = cached("summary", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to),
                   lambda: summary_data(toko, platform, m_from, m_to, d_from, d_to))
+    # tab lain untuk periode yang sama dihitung di latar → saat tab dibuka hasilnya sudah ada
+    fastcache.prefetch([lambda: api_repeat(toko, platform, m_from, m_to, d_from, d_to),
+                        lambda: api_geo(toko, platform, m_from, m_to, d_from, d_to)])
+    return resp
 
 
 def summary_data(toko, platform="all", m_from=None, m_to=None, d_from=None, d_to=None):

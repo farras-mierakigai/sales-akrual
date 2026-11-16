@@ -634,7 +634,9 @@ async function loadSummary(){
   const t=$('#toko').value; if(!t) return toast('pilih toko dulu');
   const q=qs({platform:$('#platform').value});
   $('#loadinfo').textContent='menghitung…'; $('#btnLoad').disabled=true;
-  try{ DATA=await api('/api/summary?'+q); render(); $('#loadinfo').textContent=DATA.rows.length+' bulan · '+DATA.files.length+' file'; REP=null; GEO=null; if(document.querySelector('#p-repeat').classList.contains('on')) loadRepeat(); if(document.querySelector('#p-geo').classList.contains('on')) loadGeo(); }
+  // tab yang sedang terbuka diminta bersamaan dengan ringkasan (tidak menunggu ringkasan selesai)
+  REP=null; GEO=null; if(document.querySelector('#p-repeat').classList.contains('on')) loadRepeat(); if(document.querySelector('#p-geo').classList.contains('on')) loadGeo();
+  try{ DATA=await api('/api/summary?'+q); render(); $('#loadinfo').textContent=DATA.rows.length+' bulan · '+DATA.files.length+' file'; }
   catch(e){ toast('gagal: '+e.message); $('#loadinfo').textContent=''; }
   finally{ $('#btnLoad').disabled=false; }
 }
