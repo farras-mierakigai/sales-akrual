@@ -142,6 +142,7 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
     <button data-tab="produk">Produk</button>
     <button data-tab="repeat">Pelanggan berulang</button>
     <button data-tab="geo">Wilayah pembeli</button>
+    <button data-tab="harga">Strategi harga</button>
     <button data-tab="detail">Status · Batal · Bayar</button>
     <button data-tab="hpp">HPP &amp; Laba</button>
     <button data-tab="iklan">Iklan</button>
@@ -264,6 +265,27 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
       <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Kecamatan teratas</h2><div class="desc">100 kecamatan dengan order terbanyak; daftar lengkap ada di Excel. Kecamatan dibaca dari alamat pengiriman <b>Shopee</b>; export TikTok/Tokopedia menyamarkan kecamatan (<code>*****</code>), jadi <b>% di sini dihitung dari order yang punya kecamatan saja</b> (lihat catatan di atas). Klik nama kota di tabel kota untuk menyaring kecamatannya.</div></div><input type="text" id="geoDistSearch" placeholder="🔍 cari kecamatan / kota…" style="min-width:220px"></div><div class="tblwrap" style="max-height:60vh"><table id="tblGeoDist"></table></div></div>
       <div class="card"><h2>Produk favorit per provinsi</h2><div class="desc">5 produk dengan order terbanyak di tiap provinsi (10 provinsi teratas). % = porsi dari order provinsi itu. Nama produk dikelompokkan dari judul listing (prefix brand dibuang) seperti di tab Pelanggan berulang.</div><div class="tblwrap" style="max-height:50vh"><table id="tblGeoProd"></table></div></div>
       <div class="card"><h2>Produk × provinsi: di mana produk lebih laku?</h2><div class="desc">Tiap sel = % order produk itu yang dikirim ke provinsi tersebut. Baris pertama = sebaran semua order (pembanding). Angka dalam kurung = indeks terhadap pembanding (120 = porsi provinsi itu 20% lebih besar dari biasanya; ungu pekat = jauh di atas, oranye = di bawah).</div><div class="tblwrap" style="max-height:60vh"><table id="tblGeoMatrix"></table></div></div>
+    </div>
+  </div>
+
+  <!-- STRATEGI HARGA -->
+  <div class="panel" id="p-harga">
+    <div id="hrgEmpty" class="empty">Pilih toko lalu klik <b>Hitung</b>.</div>
+    <div id="hrgBody" style="display:none">
+      <div class="note" id="hrgNote"></div>
+      <div class="card"><h2>Asumsi</h2><div class="desc">Harga dihitung ulang langsung di browser saat asumsi diubah. <b>Laba bersih per unit</b> = harga jual − biaya marketplace − iklan − HPP. <b>Biaya marketplace</b> = 1 − neto/harga produk dari laporan penghasilan (komisi, biaya layanan/proses, afiliasi, ongkir & voucher yang ditanggung penjual, PPh), dibagi ke tiap produk menurut bruto order-nya; produk yang &lt; 30% bruto-nya sudah cair memakai rata-rata platform. <b>Iklan</b> = rata-rata % iklan per platform dari tab Iklan (bukan per produk — produk yang tidak diiklankan akan terlihat lebih rugi dari kenyataannya; ganti ke angka sendiri bila perlu).</div>
+        <div class="filters" style="margin:0">
+          <label>Target laba bersih (% harga) <input type="number" id="hrgTarget" value="15" min="0" max="80" step="1" style="width:110px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
+          <label>Biaya iklan <select id="hrgAdsMode"><option value="actual">% aktual per platform</option><option value="custom">angka sendiri</option><option value="none">tanpa iklan</option></select></label>
+          <label id="hrgAdsCustomL" style="display:none">Iklan (% harga) <input type="number" id="hrgAdsCustom" value="10" min="0" max="90" step="0.5" style="width:100px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
+          <label>Pembulatan harga saran <select id="hrgRound"><option value="500">naik ke kelipatan 500</option><option value="1000">naik ke kelipatan 1.000</option><option value="900">akhiran …900</option><option value="1">tanpa pembulatan</option></select></label>
+          <label>Qty minimal <input type="number" id="hrgMinQty" value="10" min="0" step="1" style="width:90px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
+        </div>
+      </div>
+      <div class="tiles" id="hrgTiles"></div>
+      <div class="card"><h2>Biaya variabel per platform</h2><div class="desc">Persen dari harga jual, periode & filter di atas. Harga minimal agar tidak rugi = HPP ÷ (1 − total biaya variabel); harga target = HPP ÷ (1 − biaya variabel − target laba).</div><div class="tblwrap"><table id="tblHrgCh"></table></div></div>
+      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Harga per produk</h2><div class="desc">Satu baris = listing × item HPP × platform (varian dengan HPP berbeda dipisah). <b>Harga jual</b> = rata-rata bruto per unit setelah diskon penjual; <b>harga coret</b> = harga sebelum diskon. <b>Harga BEP</b> = harga terendah tanpa rugi; <b>harga target</b> = harga agar laba bersih = target. <b>Diskon maks</b> = diskon terbesar dari harga coret yang masih memenuhi target. Klik baris untuk simulasi harga, titik harga yang pernah dipakai, dan riwayat per bulan.</div></div><select id="hrgStatusF"><option value="">semua status</option><option value="rugi">Rugi</option><option value="tipis">Di bawah target</option><option value="sehat">Sesuai target</option><option value="promo">Ruang promo</option><option value="nohpp">Tanpa HPP</option></select></div><div class="tblwrap" style="max-height:70vh"><table id="tblHrg"></table></div></div>
+      <div class="card" id="hrgDetail" style="display:none"></div>
     </div>
   </div>
 
@@ -515,6 +537,7 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   if(b.dataset.tab==='iklan') loadAds();
   if(b.dataset.tab==='repeat' && !REP) loadRepeat();
   if(b.dataset.tab==='geo' && !GEO) loadGeo();
+  if(b.dataset.tab==='harga' && !HRG) loadHarga();
   if(b.dataset.tab==='tiket' && !TK.cur) loadTiket();
   try{localStorage.setItem('sa_tab',b.dataset.tab)}catch(e){}
 });
@@ -635,7 +658,7 @@ async function loadSummary(){
   const q=qs({platform:$('#platform').value});
   $('#loadinfo').textContent='menghitung…'; $('#btnLoad').disabled=true;
   // tab yang sedang terbuka diminta bersamaan dengan ringkasan (tidak menunggu ringkasan selesai)
-  REP=null; GEO=null; if(document.querySelector('#p-repeat').classList.contains('on')) loadRepeat(); if(document.querySelector('#p-geo').classList.contains('on')) loadGeo();
+  REP=null; GEO=null; if(document.querySelector('#p-repeat').classList.contains('on')) loadRepeat(); if(document.querySelector('#p-geo').classList.contains('on')) loadGeo(); HRG=null; if(document.querySelector('#p-harga').classList.contains('on')) loadHarga();
   try{ DATA=await api('/api/summary?'+q); render(); $('#loadinfo').textContent=DATA.rows.length+' bulan · '+DATA.files.length+' file'; }
   catch(e){ toast('gagal: '+e.message); $('#loadinfo').textContent=''; }
   finally{ $('#btnLoad').disabled=false; }
@@ -1022,6 +1045,123 @@ $('#geoProvSearch').oninput=()=>{ if(GEO) renderGeoProv(); };
 $('#geoCitySearch').oninput=()=>{ if(GEO) renderGeoCity(); };
 $('#geoMonthMode').onchange=()=>{ if(GEO&&GEO.totals) renderGeoMonth(); };
 $('#btnGeoX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/geo.xlsx?'+qs({platform:$('#platform').value}); };
+
+// ---------- strategi harga (rumus di browser supaya asumsi bisa diubah tanpa hitung ulang)
+let HRG=null, HRG_SEL=null;
+async function loadHarga(){
+  const t=$('#toko').value; if(!t) return;
+  $('#hrgEmpty').style.display='block'; $('#hrgEmpty').textContent='menghitung strategi harga…'; $('#hrgBody').style.display='none';
+  try{ HRG=await api('/api/pricing?'+qs({platform:$('#platform').value})); HRG_SEL=null; renderHarga(); }
+  catch(e){ $('#hrgEmpty').textContent='gagal: '+e.message; }
+}
+function hrgOpt(){ return {t:Math.min(0.9,Math.max(0,+$('#hrgTarget').value||0)/100), mode:$('#hrgAdsMode').value, adsC:Math.max(0,+$('#hrgAdsCustom').value||0)/100, rnd:$('#hrgRound').value, minq:Math.max(0,+$('#hrgMinQty').value||0)}; }
+function hrgRound(x,rnd){ if(x==null||!isFinite(x)) return null; if(rnd==='1') return Math.ceil(x); if(rnd==='900'){ let v=Math.ceil(x/1000)*1000-100; if(v<x) v+=1000; return v; } return Math.ceil(x/(+rnd))*(+rnd); }
+function hrgCosts(r,o){ const mp=(r.mp_pct??(HRG.channels[r.channel]||{}).mp_pct??0)/100; const ad=o.mode==='none'?0:o.mode==='custom'?o.adsC:((r.ads_pct??0)/100); return {mp,ad,c:mp+ad}; }
+function hrgAt(h,r,x){ return x.hpp==null?null:h*(1-x.c)-x.hpp; }   // laba bersih per unit pada harga h
+function hrgCalc(r,o){
+  const x=hrgCosts(r,o); x.hpp=r.hpp_unit; const h=r.harga;
+  if(x.hpp==null){ x.status='nohpp'; return x; }
+  x.laba=hrgAt(h,r,x); x.margin=h?x.laba/h:0; x.laba_mp=h*(1-x.mp)-x.hpp;
+  x.bep=x.c<1?x.hpp/(1-x.c):null; x.target_raw=(x.c+o.t)<1?x.hpp/(1-x.c-o.t):null; x.target=hrgRound(x.target_raw,o.rnd);
+  x.naik=x.target?x.target/h-1:null; x.turun=x.target_raw?1-x.target_raw/h:null;
+  x.dmax=(r.harga_coret&&x.target_raw)?1-x.target_raw/r.harga_coret:null;
+  x.status=x.margin<0?'rugi':x.margin<o.t-1e-9?'tipis':x.margin>=o.t+0.10?'promo':'sehat';
+  return x;
+}
+const HRG_ST={rugi:['bad','Rugi'],tipis:['warn','Di bawah target'],sehat:['ok','Sesuai target'],promo:['info','Ruang promo'],nohpp:['','Tanpa HPP']};
+const sgn=v=>(v>=0?'+':'−')+pct(Math.abs(v)*100);
+function hrgSaran(r,x,o){
+  if(x.status==='nohpp') return 'Petakan HPP-nya dulu di tab HPP & Laba.';
+  let s;
+  if(x.status==='rugi'){
+    s=x.bep?`Naikkan minimal ke ${fmtRp(hrgRound(x.bep,o.rnd))} (BEP)`+(x.target?`; target ${fmtRp(x.target)} (${sgn(x.naik)})`:''):'Biaya variabel ≥ 100% harga — tidak tertolong harga, pangkas biaya/iklan.';
+    if(x.ad>0&&x.laba_mp>0) s+=` · sebelum iklan masih untung ${pct(100*x.laba_mp/r.harga)} → ruginya karena iklan`;
+  } else if(x.status==='tipis'){
+    s=x.target?`Harga target ${fmtRp(x.target)} (${sgn(x.naik)})`:'Target tidak tercapai dengan biaya variabel ini';
+    if(x.dmax!=null&&r.diskon_pct!=null) s+=` atau kecilkan diskon dari ${pct(r.diskon_pct)} ke maks ${pct(Math.max(0,x.dmax*100))}`;
+  } else if(x.status==='promo') s=`Ruang promo: bisa turun sampai ${fmtRp(x.target)} (${sgn(-x.turun)}) dan tetap di target — uji untuk dorong volume`;
+  else s=`Aman — turun harga maks ${pct(Math.max(0,x.turun*100))} sebelum di bawah target`;
+  const cr=Object.entries(r.cross||{}).filter(([c,p])=>r.harga&&Math.abs(p/r.harga-1)>=0.1);
+  if(cr.length) s+=' · item sama di '+cr.map(([c,p])=>`${c} ${fmtRp(p)} (${sgn(p/r.harga-1)})`).join(', ');
+  return s;
+}
+function renderHarga(){
+  const H=HRG;
+  if(!H.rows.length){ $('#hrgEmpty').style.display='block'; $('#hrgEmpty').textContent='Tidak ada order terjual untuk filter ini.'; $('#hrgBody').style.display='none'; return; }
+  $('#hrgEmpty').style.display='none'; $('#hrgBody').style.display='block';
+  $('#hrgAdsCustomL').style.display=$('#hrgAdsMode').value==='custom'?'':'none';
+  const o=hrgOpt(); const labels=(H.months||[]).map(monthLabel);
+  const noAds=Object.values(H.channels).every(c=>c.ads_pct==null);
+  let note=`<b>Periode:</b> ${labels.length?labels[0]+(labels.length>1?' – '+labels[labels.length-1]:''):'–'} · platform: <b>${$('#platform').options[$('#platform').selectedIndex].text}</b> · cakupan HPP ${pct(H.totals.hpp_cover_pct)} qty · bruto sudah cair ${pct(H.totals.bruto?100*H.totals.settled_bruto/H.totals.bruto:0)}`;
+  const noMp=Object.entries(H.channels).filter(([c,v])=>v.mp_src!=='periode');
+  if(noMp.length) note+=` · <span class="pill warn">${noMp.map(([c,v])=>esc(c)+(v.mp_src?': biaya marketplace dari rata-rata semua data':': belum ada laporan penghasilan → biaya marketplace 0%')).join('; ')}</span>`;
+  if(noAds&&o.mode==='actual') note+=` · <span class="pill warn">belum ada angka iklan di tab Iklan untuk periode ini — iklan dianggap 0</span>`;
+  $('#hrgNote').innerHTML=note;
+  // per platform
+  $('#tblHrgCh').innerHTML='<tr><th class="l">Platform</th><th>Bruto</th><th>Sudah cair</th><th>Biaya marketplace</th><th>Iklan</th><th>Total biaya variabel</th><th>Sisa untuk HPP + laba</th></tr>'+Object.entries(H.channels).sort((a,b)=>b[1].bruto-a[1].bruto).map(([ch,c])=>{
+    const x=hrgCosts({channel:ch,mp_pct:c.mp_pct,ads_pct:c.ads_pct},o);
+    return `<tr><td class="l">${esc(ch)}</td><td>${fmtRp(c.bruto)}</td><td>${pct(c.bruto?100*c.settled_bruto/c.bruto:0)}</td><td>${pct(x.mp*100)}</td><td>${pct(x.ad*100)}</td><td><b>${pct(x.c*100)}</b></td><td>${pct((1-x.c)*100)}</td></tr>`; }).join('');
+  // baris produk
+  const rows=H.rows.map((r,i)=>({r,i,x:hrgCalc(r,o)})).filter(z=>z.r.qty>=o.minq);
+  const cnt={rugi:[0,0],tipis:[0,0],sehat:[0,0],promo:[0,0],nohpp:[0,0]}; let laba=0, upl=0, bru=0;
+  for(const {r,x} of rows){ cnt[x.status][0]++; cnt[x.status][1]+=r.bruto; bru+=r.bruto;
+    if(x.status!=='nohpp'){ laba+=x.laba*r.qty; if((x.status==='rugi'||x.status==='tipis')&&x.target_raw) upl+=(hrgAt(x.target_raw,r,x)-x.laba)*r.qty; } }
+  const tl=(k,lbl)=>[lbl, fmt(cnt[k][0])+' baris', pct(bru?100*cnt[k][1]/bru:0)+' dari bruto ('+fmtJt(cnt[k][1])+')'];
+  $('#hrgTiles').innerHTML=[
+    ['Laba bersih (estimasi)', fmtRp(laba), pct(bru?100*laba/bru:0)+' dari bruto · setelah HPP, marketplace, iklan'],
+    tl('rugi','Rugi'), tl('tipis','Di bawah target '+pct(o.t*100)), [ 'Sesuai target / ruang promo', fmt(cnt.sehat[0]+cnt.promo[0])+' baris', pct(bru?100*(cnt.sehat[1]+cnt.promo[1])/bru:0)+' dari bruto · '+fmt(cnt.promo[0])+' punya ruang promo'],
+    ['Potensi tambahan laba', fmtRp(upl), 'bila produk rugi & di bawah target dijual di harga target dengan qty yang sama (volume biasanya turun — uji bertahap)'],
+    tl('nohpp','Tanpa HPP'),
+  ].map(t=>`<div class="tile"><div class="k">${t[0]}</div><div class="v">${t[1]}</div><div class="s">${t[2]}</div></div>`).join('');
+  const f=$('#hrgStatusF').value;
+  const vis=rows.filter(z=>!f||z.x.status===f);
+  const td=v=>`<td>${v}</td>`;
+  $('#tblHrg').innerHTML='<tr><th class="l">Produk</th><th class="l">Platform</th><th>Qty</th><th>Bruto</th><th>Harga coret</th><th>Harga jual</th><th>Diskon</th><th>HPP/unit</th><th>Marketplace</th><th>Iklan</th><th>Laba/unit</th><th>Margin</th><th>Harga BEP</th><th>Harga target</th><th>Ubah ke target</th><th>Diskon maks</th><th class="l">Status</th><th class="l">Saran</th></tr>'+
+    (vis.length?vis.map(({r,i,x})=>{ const st=HRG_ST[x.status]; const nh=x.status==='nohpp';
+      return `<tr data-i="${i}" style="cursor:pointer${HRG_SEL===i?';background:var(--bg2)':''}"><td class="l" title="${esc(r.product)}" style="min-width:230px"><b>${esc(r.name)}</b><div class="small muted">${esc(r.hpp_item||'— tanpa item HPP —')}</div></td><td class="l">${esc(r.channel)}</td>${td(fmt(r.qty))}${td(fmt(r.bruto))}${td(r.harga_coret?fmt(r.harga_coret):'–')}${td('<b>'+fmt(r.harga)+'</b>')}${td(r.diskon_pct==null?'–':pct(r.diskon_pct))}${td(nh?'–':fmt(x.hpp))}${td(pct(x.mp*100)+(r.mp_src==='platform'?'*':''))}${td(pct(x.ad*100))}<td class="${!nh&&x.laba<0?'neg':''}">${nh?'–':fmt(x.laba)}</td><td class="${!nh&&x.laba<0?'neg':''}"><b>${nh?'–':pct(x.margin*100)}</b></td>${td(nh||!x.bep?'–':fmt(x.bep))}${td(nh||!x.target?'–':'<b>'+fmt(x.target)+'</b>')}<td class="${x.naik>0?'neg':''}">${nh||x.naik==null?'–':sgn(x.naik)}</td>${td(x.dmax==null?'–':pct(Math.max(0,x.dmax*100)))}<td class="l"><span class="pill ${st[0]}">${st[1]}</span></td><td class="l small" style="min-width:300px;white-space:normal">${esc(hrgSaran(r,x,o))}</td></tr>`; }).join('')
+    :'<tr><td class="muted" colspan="18">tidak ada baris untuk filter ini</td></tr>');
+  dt('tblHrg',{size:50});
+  if(HRG_SEL!=null) hrgShow(HRG_SEL,true); else $('#hrgDetail').style.display='none';
+}
+function hrgShow(i,keep){
+  const r=HRG.rows[i]; if(!r) return; const o=hrgOpt(); const x=hrgCalc(r,o);
+  if(HRG_SEL!==i){ HRG_SEL=i; document.querySelectorAll('#tblHrg tr[data-i]').forEach(tr=>tr.style.background=+tr.dataset.i===i?'var(--bg2)':''); }
+  const box=$('#hrgDetail'); box.style.display='block';
+  const nh=x.status==='nohpp'; const cur=keep&&$('#hrgSim')?+$('#hrgSim').value:(nh?r.harga:(x.target||r.harga));
+  box.innerHTML=`<div class="row" style="justify-content:space-between"><div><h2>${esc(r.name)} · ${esc(r.channel)}</h2><div class="desc">${esc(r.product)}<br>Item HPP: <b>${esc(r.hpp_item||'—')}</b> · terjual ${r.first} s/d ${r.last} · rentang harga ${fmtRp(r.pmin)} – ${fmtRp(r.pmax)} (persentil 5–95) · biaya marketplace ${r.mp_src==='produk'?'dari order produk ini':'rata-rata platform (* order yang cair < 30%)'}</div></div><button class="ghost" onclick="HRG_SEL=null;$('#hrgDetail').style.display='none';document.querySelectorAll('#tblHrg tr[data-i]').forEach(tr=>tr.style.background='')">✕ tutup</button></div>
+  <div class="grid2"><div><h2 style="font-size:14px">Simulasi harga</h2>
+    <div class="row" style="margin:6px 0 10px"><label class="small">Harga jual baru (Rp) <input type="number" id="hrgSim" value="${Math.round(cur)}" step="500" style="width:150px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
+      <button class="ghost" onclick="$('#hrgSim').value=${r.harga};hrgSim()">harga sekarang</button>${x.bep?`<button class="ghost" onclick="$('#hrgSim').value=${hrgRound(x.bep,o.rnd)};hrgSim()">BEP</button>`:''}${x.target?`<button class="ghost" onclick="$('#hrgSim').value=${x.target};hrgSim()">target</button>`:''}</div>
+    <div class="tblwrap"><table id="tblHrgSim"></table></div><div class="small muted" style="margin-top:6px" id="hrgSimNote"></div></div>
+    <div><h2 style="font-size:14px">Titik harga yang pernah dipakai</h2><div class="desc">Harga satuan dibulatkan ke 1.000, urut qty. Volume per titik harga juga dipengaruhi musim/kampanye — jadikan petunjuk, bukan bukti elastisitas.</div><div class="tblwrap"><table id="tblHrgPts"></table></div></div></div>
+  <h2 style="font-size:14px;margin-top:12px">Riwayat per bulan</h2><div class="chart" style="height:260px"><canvas id="chHrgHist"></canvas></div><div class="legend" id="lgHrgHist"></div>`;
+  $('#hrgSim').oninput=hrgSim; hrgSim();
+  $('#tblHrgPts').innerHTML='<tr><th>Harga</th><th>Qty</th><th>Order</th><th class="l">Dipakai</th><th>Laba/unit</th><th>Margin</th></tr>'+r.points.map(p=>{ const l=hrgAt(p[0],r,x); return `<tr><td>${fmt(p[0])}</td><td>${fmt(p[1])}</td><td>${fmt(p[2])}</td><td class="l small">${p[3]} – ${p[4]}</td><td class="${l<0?'neg':''}">${l==null?'–':fmt(l)}</td><td class="${l<0?'neg':''}">${l==null||!p[0]?'–':pct(100*l/p[0])}</td></tr>`; }).join('');
+  const hs=r.hist||[]; const ds=[{type:'bar',label:'Qty',data:hs.map(h=>h[1]),backgroundColor:'#D9CCFF',yAxisID:'y',order:2},{type:'line',label:'Harga jual rata-rata',data:hs.map(h=>h[2]),borderColor:'#F4561E',backgroundColor:'#F4561E',yAxisID:'y1',tension:.2,order:1}];
+  if(!nh&&x.bep) ds.push({type:'line',label:'Harga BEP',data:hs.map(()=>Math.round(x.bep)),borderColor:'#C62828',borderDash:[5,4],pointRadius:0,yAxisID:'y1',order:0});
+  if(!nh&&x.target) ds.push({type:'line',label:'Harga target',data:hs.map(()=>x.target),borderColor:'#1B8A4C',borderDash:[5,4],pointRadius:0,yAxisID:'y1',order:0});
+  mkChart('chHrgHist',{data:{labels:hs.map(h=>monthLabel(h[0])),datasets:ds},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',titleColor:'#1E1E1E',bodyColor:'#1E1E1E',borderColor:'#1E1E1E',borderWidth:1,callbacks:{label:c=>' '+c.dataset.label+': '+(c.dataset.yAxisID==='y'?fmt(c.raw):fmtRp(c.raw))}}},scales:{x:{grid:{display:false},ticks:{color:'#5B5B6B'}},y:{beginAtZero:true,grid:{color:'#EEE'},border:{display:false},ticks:{color:'#5B5B6B',callback:v=>fmt(v)},title:{display:true,text:'qty'}},y1:{position:'right',grid:{display:false},border:{display:false},ticks:{color:'#5B5B6B',callback:v=>(v/1000).toLocaleString('id-ID')+'rb'}}}}});
+  legend('#lgHrgHist',ds.map(d=>({c:d.borderColor||d.backgroundColor,l:d.label})));
+  if(!keep) box.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function hrgSim(){
+  const r=HRG.rows[HRG_SEL]; if(!r) return; const o=hrgOpt(); const x=hrgCalc(r,o); const h=+$('#hrgSim').value||0;
+  if(x.status==='nohpp'){ $('#tblHrgSim').innerHTML='<tr><td class="muted">Produk ini belum punya HPP — petakan di tab HPP & Laba untuk simulasi laba.</td></tr>'; $('#hrgSimNote').textContent=''; return; }
+  const l0=x.laba, l1=hrgAt(h,r,x); const T0=l0*r.qty, T1=l1*r.qty;
+  const row=(k,a,b,f)=>`<tr><td class="l">${k}</td><td>${f(a)}</td><td><b>${f(b)}</b></td></tr>`;
+  $('#tblHrgSim').innerHTML='<tr><th class="l"></th><th>Sekarang</th><th>Harga baru</th></tr>'+
+    row('Harga jual',r.harga,h,fmtRp)+row('Diskon dari harga coret',r.harga_coret?1-r.harga/r.harga_coret:null,r.harga_coret?1-h/r.harga_coret:null,v=>v==null?'–':pct(v*100))+
+    row('Biaya marketplace + iklan',r.harga*x.c,h*x.c,fmtRp)+row('HPP',x.hpp,x.hpp,fmtRp)+row('Laba bersih / unit',l0,l1,fmtRp)+row('Margin',r.harga?l0/r.harga:0,h?l1/h:0,v=>pct(v*100))+
+    row(`Laba total di qty yang sama (${fmt(r.qty)})`,T0,T1,fmtRp);
+  let n;
+  if(l1<=0) n='Di harga ini tiap unit rugi — menambah volume justru menambah rugi.';
+  else if(T0<=0) n=`Harga sekarang rugi; di harga baru tiap unit untung ${fmtRp(l1)}. Laba total positif selama masih ada yang beli.`;
+  else { const q=T0/l1, ch=q/r.qty-1; n=`Agar laba total sama dengan sekarang, qty perlu ${fmt(q)} (${sgn(ch)} dari ${fmt(r.qty)}). `+(ch<0?`Artinya volume boleh turun sampai ${pct(-ch*100)} dan laba tetap tidak berkurang.`:`Artinya volume harus naik ${pct(ch*100)} untuk menutup margin yang hilang.`); }
+  $('#hrgSimNote').textContent=n;
+}
+['#hrgTarget','#hrgAdsCustom','#hrgMinQty'].forEach(s=>$(s).oninput=()=>HRG&&renderHarga());
+['#hrgAdsMode','#hrgRound','#hrgStatusF'].forEach(s=>$(s).onchange=()=>HRG&&renderHarga());
+$('#tblHrg').onclick=e=>{ const tr=e.target.closest('tr[data-i]'); if(tr) hrgShow(+tr.dataset.i); };
 
 function renderDetail(){
   const B=DATA.breakdown;

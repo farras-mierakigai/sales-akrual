@@ -826,7 +826,8 @@ def api_summary(toko: str, platform: str = "all", m_from: Optional[str] = None, 
                   lambda: summary_data(toko, platform, m_from, m_to, d_from, d_to))
     # tab lain untuk periode yang sama dihitung di latar → saat tab dibuka hasilnya sudah ada
     fastcache.prefetch([lambda: api_repeat(toko, platform, m_from, m_to, d_from, d_to),
-                        lambda: api_geo(toko, platform, m_from, m_to, d_from, d_to)])
+                        lambda: api_geo(toko, platform, m_from, m_to, d_from, d_to),
+                        lambda: api_pricing(toko, platform, m_from, m_to, d_from, d_to)])
     return resp
 
 
@@ -946,6 +947,18 @@ def api_geo_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = None,
     name = f"Wilayah pembeli {toko} {platform} {m_from or ''}-{m_to or ''}.xlsx".replace("  ", " ")
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# ---------------------------------------------------------------- strategi harga
+
+@app.get("/api/pricing")
+def api_pricing(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
+                d_from: Optional[str] = None, d_to: Optional[str] = None):
+    def compute():
+        O, I, A, files, raw = get_data(toko)
+        O, I = analysis.filter_dates(O, I, d_from, d_to)
+        return analysis.pricing(O, I, adsmod.load(toko), platform, m_from, m_to)
+    return cached("pricing", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to), compute)
 
 
 @app.get("/api/export.xlsx")
@@ -1387,5 +1400,5 @@ if __name__ == "__main__":
     else:
         print(f"email: mode {mailer.mode()}")
     if os.environ.get("SA_WARM", "1") != "0":
-        fastcache.start_warmer([lambda t: api_files(t), lambda t: api_summary(t), lambda t: api_repeat(t), lambda t: api_geo(t)])
+        fastcache.start_warmer([lambda t: api_files(t), lambda t: api_summary(t), lambda t: api_repeat(t), lambda t: api_geo(t), lambda t: api_pricing(t)])
     uvicorn.run(app, host=host, port=port, proxy_headers=True, forwarded_allow_ips="*", server_header=False)

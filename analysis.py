@@ -1479,3 +1479,171 @@ def export_geo_xlsx(toko, O, platform="all", m_from=None, m_to=None):
               [["(semua order)", T.get("orders")] + [M["baseline"].get(p) for p in M["provinces"]]]
               + [[r["product"], r["orders"]] + [r["share"].get(p) for p in M["provinces"]] for r in M["rows"]])
     return wb
+
+
+# ---------------------------------------------------------------- strategi harga
+
+PRICE_STEP = 1000           # pembulatan harga satuan untuk "titik harga" (riwayat harga yang pernah dipakai)
+PRICE_POINTS = 6            # titik harga per baris (urut qty)
+PRICE_MIN_SETTLED = 0.3     # biaya marketplace per produk dipakai bila ≥ 30% bruto-nya sudah ada di laporan penghasilan
+
+
+def _ads_pct_by_channel(Oall, ads, months):
+    """% iklan dari bruto per channel (Shopee / TikTok / Tokopedia) di bulan-bulan periode.
+    Atribusi 'shopee' → Shopee, 'tiktok' → TikTok + Tokopedia, 'all' → dibagi menurut bruto tiap channel di bulan itu."""
+    out = {SHOPEE: None, TIKTOK: None, TOKOPEDIA: None}
+    if not ads or not (ads.get("months") or {}) or not len(Oall):
+        return out, {}
+    b = Oall.groupby(["month", "channel"])["bruto"].sum()
+    pool = {SHOPEE: 0.0, "tt": 0.0}
+    brut = {SHOPEE: 0.0, "tt": 0.0}
+    attr = ads.get("attribution") or {}
+    for m in months:
+        row = (ads.get("months") or {}).get(m) or {}
+        bs = float(b.get((m, SHOPEE), 0.0))
+        bt = float(b.get((m, TIKTOK), 0.0)) + float(b.get((m, TOKOPEDIA), 0.0))
+        brut[SHOPEE] += bs
+        brut["tt"] += bt
+        for c in ads.get("channels", []):
+            v = float(row.get(c, 0) or 0)
+            a = attr.get(c, "all")
+            if a == "shopee":
+                pool[SHOPEE] += v
+            elif a == "tiktok":
+                pool["tt"] += v
+            elif bs + bt > 0:
+                pool[SHOPEE] += v * bs / (bs + bt)
+                pool["tt"] += v * bt / (bs + bt)
+    if brut[SHOPEE] > 0:
+        out[SHOPEE] = round(100.0 * pool[SHOPEE] / brut[SHOPEE], 2)
+    if brut["tt"] > 0:
+        out[TIKTOK] = out[TOKOPEDIA] = round(100.0 * pool["tt"] / brut["tt"], 2)
+    return out, {SHOPEE: pool[SHOPEE], "TikTok + Tokopedia": pool["tt"]}
+
+
+def pricing(O, I, ads=None, platform="all", m_from=None, m_to=None):
+    """Bahan strategi harga per (channel, listing, item HPP) di periode: harga jual & harga coret rata-rata per unit,
+    HPP per unit, biaya marketplace % (1 − neto/harga produk order-nya, dibagi ke baris menurut bruto), % iklan per channel,
+    titik harga yang pernah dipakai, dan riwayat per bulan. Hitungan laba/harga target dilakukan di browser supaya
+    target margin & asumsi iklan bisa diubah tanpa menghitung ulang."""
+    O = _cols(O, ["platform", "channel", "order_id", "created", "month", "is_unpaid", "is_batal", "is_retur", "product",
+                  "qty", "bruto", "harga_awal", "hpp_item", "hpp_unit"])
+    I = _cols(I, ["platform", "channel", "order_id", "is_retur", "neto", "harga_produk"])
+    empty = dict(rows=[], channels={}, months=[], totals=None)
+    if not len(O):
+        return empty
+    O = O[(~O["is_unpaid"]) & (~O["is_batal"]) & (~O["is_retur"]) & (O["qty"] > 0)]
+    # rasio neto/harga produk per order (order yang sudah cair & tidak dikembalikan penuh)
+    ratio = pd.Series(dtype=float)
+    if len(I):
+        I_ok = I[~I["is_retur"]] if "is_retur" in I else I
+        g = I_ok.groupby("order_id").agg(n=("neto", "sum"), h=("harga_produk", "sum"))
+        g = g[g["h"] > 0]
+        ratio = (g["n"] / g["h"]).clip(-1.0, 1.5)
+    # cadangan: biaya marketplace % per channel dari seluruh data (periode yang belum punya laporan penghasilan)
+    rt_all = O["order_id"].map(ratio)
+    ok_all = rt_all.notna()
+    mp_all = {}
+    for ch, x in O[ok_all].assign(mp=O["bruto"] * (1 - rt_all)).groupby("channel"):
+        if x["bruto"].sum() > 0:
+            mp_all[ch] = round(100.0 * float(x["mp"].sum()) / float(x["bruto"].sum()), 2)
+    O = _filter_months(O, "month", m_from, m_to)
+    months = sorted(O["month"].dropna().unique())
+    ads_pct, ads_pool = _ads_pct_by_channel(O, ads, months)
+    O = _channel_filter(O, platform)
+    if not len(O):
+        return empty
+    O = O.copy()
+    for c in ("hpp_item", "product"):
+        if c not in O:
+            O[c] = ""
+    if "hpp_unit" not in O:
+        O["hpp_unit"] = 0.0
+    if "harga_awal" not in O:
+        O["harga_awal"] = 0.0
+    O["hpp_item"] = O["hpp_item"].fillna("").astype(str)
+    O["hpp_unit"] = O["hpp_unit"].fillna(0.0)
+
+    O["rt"] = O["order_id"].map(ratio)
+    st = O["rt"].notna()
+    O["sb"] = O["bruto"].where(st, 0.0)                    # bruto yang sudah ada di laporan penghasilan
+    O["mp"] = (O["bruto"] * (1 - O["rt"])).where(st, 0.0)  # biaya marketplace (potongan + ongkir/voucher penjual), Rp
+    O["hq"] = O["qty"].where(O["hpp_unit"] > 0, 0.0)
+    O["ht"] = O["qty"] * O["hpp_unit"]
+    O["ha"] = O["harga_awal"].where(O["harga_awal"] > 0, 0.0)
+    O["hb"] = O["bruto"].where(O["harga_awal"] > 0, 0.0)  # bruto pasangan harga coret (untuk % diskon)
+    O["unit"] = O["bruto"] / O["qty"]
+
+    ch_stats = {}
+    for ch, x in O.groupby("channel"):
+        sb = float(x["sb"].sum())
+        ch_stats[ch] = dict(bruto=float(x["bruto"].sum()), settled_bruto=sb,
+                            mp_pct=round(100.0 * float(x["mp"].sum()) / sb, 2) if sb > 0 else mp_all.get(ch),
+                            mp_src="periode" if sb > 0 else ("semua data" if ch in mp_all else None),
+                            ads_pct=ads_pct.get(ch))
+
+    keys = ["channel", "product", "hpp_item"]
+    agg = O.groupby(keys, sort=False).agg(qty=("qty", "sum"), bruto=("bruto", "sum"), order=("order_id", "nunique"),
+                                         sb=("sb", "sum"), mp=("mp", "sum"), hq=("hq", "sum"), ht=("ht", "sum"),
+                                         ha=("ha", "sum"), hb=("hb", "sum"), pmed=("unit", "median"), first=("created", "min"), last=("created", "max")).reset_index()
+    # rentang harga tanpa baris gratis/bonus (harga satuan 0) dan pencilan: persentil 5–95
+    q = O[O["unit"] > 0].groupby(keys, sort=False)["unit"].quantile([0.05, 0.95]).unstack()
+    q.columns = ["pmin", "pmax"]
+    agg = agg.merge(q.reset_index(), on=keys, how="left")
+    # titik harga: harga satuan dibulatkan → qty & order per titik
+    O["pp"] = (O["unit"] / PRICE_STEP).round() * PRICE_STEP
+    pts = O.groupby(keys + ["pp"], sort=False).agg(q=("qty", "sum"), o=("order_id", "nunique"),
+                                                   a=("created", "min"), z=("created", "max")).reset_index()
+    pts = pts.sort_values("q", ascending=False)
+    pts_by = {}
+    for r in pts.itertuples(index=False):
+        k = (r.channel, r.product, r.hpp_item)
+        lst = pts_by.setdefault(k, [])
+        if len(lst) < PRICE_POINTS:
+            lst.append([float(r.pp), float(r.q), int(r.o), r.a.strftime("%Y-%m-%d") if pd.notna(r.a) else "",
+                        r.z.strftime("%Y-%m-%d") if pd.notna(r.z) else ""])
+    # riwayat per bulan: qty, harga rata-rata
+    hist = O.groupby(keys + ["month"], sort=False).agg(q=("qty", "sum"), b=("bruto", "sum")).reset_index().sort_values("month")
+    hist_by = {}
+    for r in hist.itertuples(index=False):
+        hist_by.setdefault((r.channel, r.product, r.hpp_item), []).append([r.month, float(r.q), round(float(r.b) / float(r.q)) if r.q else None])
+
+    names = product_names(agg["product"])
+    tot_bruto = float(agg["bruto"].sum())
+    rows = []
+    for i, r in enumerate(agg.itertuples(index=False)):
+        k = (r.channel, r.product, r.hpp_item)
+        cs = ch_stats.get(r.channel, {})
+        own = r.sb / r.bruto if r.bruto else 0.0
+        if r.sb > 0 and own >= PRICE_MIN_SETTLED:
+            mp_pct, mp_src = round(100.0 * r.mp / r.sb, 2), "produk"
+        else:
+            mp_pct, mp_src = cs.get("mp_pct"), "platform"
+        rows.append(dict(
+            channel=r.channel, product=r.product, name=names.iloc[i], hpp_item=r.hpp_item,
+            qty=float(r.qty), order=int(r.order), bruto=float(r.bruto), share_pct=round(100.0 * r.bruto / tot_bruto, 2) if tot_bruto else 0.0,
+            harga=round(r.bruto / r.qty) if r.qty else 0,
+            harga_coret=round(r.bruto / r.qty * r.ha / r.hb) if (r.qty and r.hb > 0) else None,   # harga jual ÷ (1 − diskon)
+            diskon_pct=round(100.0 * (1 - r.hb / r.ha), 1) if r.ha > 0 else None,
+            hpp_unit=round(r.ht / r.hq) if r.hq > 0 else None, hpp_cover_pct=round(100.0 * r.hq / r.qty, 1) if r.qty else 0.0,
+            mp_pct=mp_pct, mp_src=mp_src, settled_pct=round(100.0 * own, 1),
+            ads_pct=ads_pct.get(r.channel),
+            pmin=float(r.pmin) if pd.notna(r.pmin) else None, pmed=float(r.pmed), pmax=float(r.pmax) if pd.notna(r.pmax) else None,
+            first=r.first.strftime("%Y-%m-%d") if pd.notna(r.first) else "", last=r.last.strftime("%Y-%m-%d") if pd.notna(r.last) else "",
+            points=pts_by.get(k, []), hist=hist_by.get(k, []),
+        ))
+    rows.sort(key=lambda x: -x["bruto"])
+    # selisih harga antar channel untuk item HPP yang sama (berbobot qty)
+    by_item = {}
+    for x in rows:
+        if x["hpp_item"]:
+            d = by_item.setdefault(x["hpp_item"], {})
+            q, b = d.get(x["channel"], (0.0, 0.0))
+            d[x["channel"]] = (q + x["qty"], b + x["bruto"])
+    for x in rows:
+        d = by_item.get(x["hpp_item"]) or {}
+        x["cross"] = {c: round(b / q) for c, (q, b) in d.items() if q > 0 and c != x["channel"]}
+
+    totals = dict(rows=len(rows), qty=float(O["qty"].sum()), bruto=tot_bruto, settled_bruto=float(O["sb"].sum()),
+                  hpp_cover_pct=round(100.0 * float(O["hq"].sum()) / float(O["qty"].sum()), 1) if float(O["qty"].sum()) else 0.0)
+    return dict(rows=rows, channels=ch_stats, ads_pool=ads_pool, months=months, totals=totals)
