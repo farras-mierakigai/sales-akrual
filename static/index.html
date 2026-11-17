@@ -223,9 +223,9 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
   <div class="panel" id="p-repeat">
     <div id="repEmpty" class="empty">Pilih toko lalu klik <b>Hitung</b>.</div>
     <div id="repBody" style="display:none">
-      <div class="note" id="repNote"></div>
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px"><div class="note" id="repNote" style="flex:1;margin:0"></div><div class="row" style="gap:6px;flex:none"><button id="btnRepeatX" title="Semua tabel + grafik, termasuk daftar lengkap pelanggan berulang">⬇ Excel</button><button id="btnRepeatPdf" title="Ringkasan dashboard siap kirim / cetak (A4 mendatar)">⬇ PDF</button></div></div>
       <div class="tiles" id="repTiles"></div>
-      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Per platform</h2><div class="desc">Basis = order <b>terjual</b> (non-batal, non-retur, sudah bayar) dari file pesanan, periode & filter di atas. <b>Pelanggan baru</b> = order pertamanya jatuh di periode ini; <b>lama</b> = sudah pernah order sebelum periode. <b>Order ulang</b> = order ke-2 dst dari pelanggan yang sama (urutan dihitung dari semua data toko; order terpisah di hari yang sama tetap dihitung sebagai order ulang). Pelanggan tidak bisa dicocokkan lintas platform (username berbeda), jadi baris <b>Gabungan</b> = penjumlahan.</div></div><button id="btnRepeatX">⬇ Excel pelanggan</button></div><div class="tblwrap"><table id="tblRepPlat"></table></div></div>
+      <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Per platform</h2><div class="desc">Basis = order <b>terjual</b> (non-batal, non-retur, sudah bayar) dari file pesanan, periode & filter di atas. <b>Pelanggan baru</b> = order pertamanya jatuh di periode ini; <b>lama</b> = sudah pernah order sebelum periode. <b>Order ulang</b> = order ke-2 dst dari pelanggan yang sama (urutan dihitung dari semua data toko; order terpisah di hari yang sama tetap dihitung sebagai order ulang). Pelanggan tidak bisa dicocokkan lintas platform (username berbeda), jadi baris <b>Gabungan</b> = penjumlahan.</div></div></div><div class="tblwrap"><table id="tblRepPlat"></table></div></div>
       <div class="grid2">
         <div class="card"><h2>Pelanggan baru vs lama per bulan</h2><div class="desc">Jumlah pelanggan unik yang order di bulan itu; <b>lama</b> = sudah pernah order di bulan sebelumnya.</div><div class="chart"><canvas id="chRepNew"></canvas></div><div class="legend" id="lgRepNew"></div></div>
         <div class="card"><h2>Porsi order ulang per bulan</h2><div class="desc">% order bulan itu yang merupakan order ke-2 dst dari pelanggan yang sama, dan % bruto dari pelanggan lama.</div><div class="chart"><canvas id="chRepPct"></canvas></div><div class="legend" id="lgRepPct"></div></div>
@@ -967,7 +967,9 @@ function renderRepTop(){
   dt('tblRepTop',{search:false});
 }
 let repSearchT=null; $('#repSearch').oninput=()=>{ clearTimeout(repSearchT); repSearchT=setTimeout(()=>{ if(REP) renderRepTop(); },250); };
-$('#btnRepeatX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/repeat.xlsx?'+qs({platform:$('#platform').value}); };
+const repDl=ext=>{ if(!$('#toko').value) return toast('pilih toko dulu'); toast('menyiapkan '+(ext==='pdf'?'PDF':'Excel')+'…'); location.href='/api/repeat.'+ext+'?'+qs({platform:$('#platform').value}); };
+$('#btnRepeatX').onclick=()=>repDl('xlsx');
+$('#btnRepeatPdf').onclick=()=>repDl('pdf');
 
 // ---------- wilayah pembeli (demografi)
 let GEO=null;

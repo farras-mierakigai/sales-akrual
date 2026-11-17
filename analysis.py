@@ -1146,69 +1146,6 @@ def repeat_customers(O, platform="all", m_from=None, m_to=None, top=None):
     return empty
 
 
-def export_repeat_xlsx(toko, O, platform="all", m_from=None, m_to=None):
-    """Excel analisa pelanggan berulang: ringkasan per platform, per bulan, distribusi, kohort, dan SEMUA pelanggan berulang."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
-    R = repeat_customers(O, platform, m_from, m_to)
-    wb = Workbook()
-    bold = Font(bold=True)
-
-    def sheet(title, header, rows, first=False):
-        ws = wb.active if first else wb.create_sheet()
-        ws.title = title[:31]
-        ws.append(header)
-        for c in ws[1]:
-            c.font = bold
-        for r in rows:
-            ws.append(r)
-        ws.freeze_panes = "A2"
-        return ws
-
-    keys = ["label", "customers", "new_customers", "returning_customers", "repeat_customers", "repeat_pct", "orders", "repeat_orders",
-            "repeat_orders_pct", "bruto", "repeat_bruto", "repeat_bruto_pct", "orders_per_customer", "bruto_per_customer", "aov", "gap_median", "gap_avg"]
-    head = ["Platform", "Pelanggan aktif", "Pelanggan baru", "Pelanggan lama", "Pernah beli ≥2×", "% pernah beli ≥2×", "Order", "Order ulang",
-            "% order ulang", "Bruto", "Bruto order ulang", "% bruto order ulang", "Order/pelanggan", "Bruto/pelanggan", "Rata-rata/order",
-            "Median jarak order (hari)", "Rata-rata jarak (hari)"]
-    rows = [[s.get(k) for k in keys] for s in R["channels"]] + ([[R["totals"].get(k) for k in keys]] if R["totals"] else [])
-    sheet("Per platform", head, rows, first=True)
-    sheet("Per bulan", ["Bulan", "Pelanggan aktif", "Baru", "Lama", "% lama", "Order", "Order ulang", "% order ulang", "Bruto", "Bruto baru", "Bruto lama"],
-          [[m["month"], m["customers"], m["new"], m["returning"], m["returning_pct"], m["orders"], m["repeat_orders"], m["repeat_orders_pct"],
-            m["bruto"], m["bruto_new"], m["bruto_returning"]] for m in R["monthly"]])
-    sheet("Distribusi order", ["Jumlah order (sepanjang data)", "Pelanggan", "% pelanggan", "Bruto periode", "% bruto"],
-          [[d["bucket"], d["customers"], d["customers_pct"], d["bruto"], d["bruto_pct"]] for d in R["dist"]])
-    sheet("Jarak order ulang", ["Jarak sejak order sebelumnya", "Order ulang", "% order ulang", "Bruto"],
-          [[g["bucket"], g["orders"], g["orders_pct"], g["bruto"]] for g in R["gap"]])
-    sheet("Kohort retensi %", ["Kohort (bulan order pertama)", "Pelanggan"] + [f"+{k} bln" for k in range(R["cohort_cols"])],
-          [[c["cohort"], c["size"]] + c["pct"] for c in R["cohorts"]])
-    H = R.get("habits") or {}
-    hk = ["orders", "new", "new_pct", "new_bruto", "variant", "variant_pct", "variant_bruto", "same", "same_pct", "same_bruto"]
-    hh = ["Order ulang", "Produk baru", "% produk baru", "Bruto produk baru", "Warna/varian baru", "% warna/varian baru", "Bruto warna/varian baru",
-          "Item sama persis", "% item sama", "Bruto item sama"]
-    sheet("Kebiasaan order ulang", ["Platform / urutan order"] + hh,
-          [[s["label"]] + [s.get(k) for k in hk] for s in H.get("channels", [])]
-          + ([[H["totals"]["label"]] + [H["totals"].get(k) for k in hk]] if H.get("totals") else [])
-          + [["Order " + s["bucket"]] + [s.get(k) for k in hk] for s in H.get("seq", [])])
-    sheet("Produk dibeli ulang", ["Platform", "Produk", "Pelanggan", "Item dibeli ulang", "Item sama persis", "Warna/varian baru", "Qty", "Bruto"],
-          [[p["channel"], p["product"], p["customers"], p["lines"], p["same"], p["variant"], p["qty"], p["bruto"]] for p in H.get("products", [])])
-    sheet("Produk baru pelanggan lama", ["Platform", "Produk", "Pelanggan", "Item", "Qty", "Bruto"],
-          [[p["channel"], p["product"], p["customers"], p["lines"], p["qty"], p["bruto"]] for p in H.get("new_products", [])])
-    sheet("Lanjut beli", ["Platform", "Pernah beli", "Lalu beli (produk baru)", "Pelanggan"],
-          [[p["channel"], p["src"], p["dst"], p["customers"]] for p in H.get("pairs", [])])
-    LA = H.get("launches") or {}
-    lk = ["launches", "buyers", "new", "new_pct", "old", "old_pct", "orders", "bruto"]
-    sheet("Produk baru rilis", ["Platform / produk", "Bulan rilis", "Produk baru", "Pembeli", "Orang baru", "% orang baru", "Pelanggan lama", "% pelanggan lama", "Order", "Bruto"],
-          [[c["label"], ""] + [c.get(k) for k in lk] for c in LA.get("channels", [])]
-          + ([[LA["totals"]["label"], ""] + [LA["totals"].get(k) for k in lk]] if LA.get("totals") else [])
-          + [[f'{r["label"]}: {r["product"]}', r["month"], 1, r["buyers"], r["new"], r["new_pct"], r["old"], r["old_pct"], r["orders"], r["bruto"]] for r in LA.get("items", [])])
-    hab = lambda h: "" if not h else f'{h["new"]} produk baru · {h["variant"]} warna/varian baru · {h["same"]} item sama'
-    sheet("Pelanggan berulang", ["Platform", "Pelanggan", "Order di periode", "Order sepanjang data", "Qty", "Bruto periode", "Order pertama",
-                                 "Order terakhir", "Rentang (hari)", "Rata-rata jarak (hari)", "Produk paling sering", "Kebiasaan order ulang"],
-          [[t["channel"], t["buyer"], t["orders"], t["orders_total"], t["qty"], t["bruto"], t["first"], t["last"], t["span_days"], t["gap_avg"], t["product"], hab(t.get("habit"))]
-           for t in R["top"]])
-    return wb
-
-
 # ---------------------------------------------------------------- demografi wilayah pembeli (provinsi / kota / pulau)
 
 REGIONS = [

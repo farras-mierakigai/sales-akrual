@@ -902,19 +902,31 @@ def api_repeat(toko: str, platform: str = "all", m_from: Optional[str] = None, m
                          done, missing)
 
 
+def _repeat_download(toko, platform, m_from, m_to, d_from, d_to, ext):
+    """Unduhan dashboard Pelanggan berulang (Excel / PDF) dari hasil /api/repeat yang sudah di-cache (tidak hitung ulang)."""
+    import repeat_export
+    R = json.loads(api_repeat(toko, platform, m_from, m_to, d_from, d_to).body)
+    meta = repeat_export.meta_for(R, toko, platform, d_from, d_to)
+    if ext == "pdf":
+        body, mt = repeat_export.pdf(R, meta), "application/pdf"
+    else:
+        body, mt = repeat_export.xlsx_bytes(R, meta), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    name = f'Pelanggan berulang {toko} {meta["platform"]} {meta["period"]}.{ext}'.replace("/", "-")
+    ascii_name = name.encode("ascii", "replace").decode().replace("?", "-").replace('"', "")
+    return Response(body, media_type=mt, headers={
+        "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"})
+
+
 @app.get("/api/repeat.xlsx")
 def api_repeat_xlsx(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
                     d_from: Optional[str] = None, d_to: Optional[str] = None):
-    if toko not in analysis.list_toko():
-        raise HTTPException(404, f"toko '{toko}' tidak ada")
-    _ensure_buyer_cols(toko)
-    O, I, A, files, raw = get_data(toko)
-    O, I = analysis.filter_dates(O, I, d_from, d_to)
-    wb = analysis.export_repeat_xlsx(toko, O, platform, m_from, m_to)
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
-    name = f"Pelanggan berulang {toko} {platform} {m_from or ''}-{m_to or ''}.xlsx".replace("  ", " ")
-    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return _repeat_download(toko, platform, m_from, m_to, d_from, d_to, "xlsx")
+
+
+@app.get("/api/repeat.pdf")
+def api_repeat_pdf(toko: str, platform: str = "all", m_from: Optional[str] = None, m_to: Optional[str] = None,
+                   d_from: Optional[str] = None, d_to: Optional[str] = None):
+    return _repeat_download(toko, platform, m_from, m_to, d_from, d_to, "pdf")
 
 
 # ---------------------------------------------------------------- demografi wilayah pembeli

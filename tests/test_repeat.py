@@ -199,7 +199,13 @@ def test_api_repeat_and_reparse_old_uploads():
     assert x.status_code == 200 and x.headers["content-type"].startswith("application/vnd.openxmlformats")
     from openpyxl import load_workbook
     import io
-    assert "Kebiasaan order ulang" in load_workbook(io.BytesIO(x.content)).sheetnames
+    wbx = load_workbook(io.BytesIO(x.content))
+    assert wbx.sheetnames[0] == "Ringkasan" and "Kebiasaan order ulang" in wbx.sheetnames
+    assert wbx["Pelanggan berulang"]["B2"].value == "budi_88"
+    pdf = c.get("/api/repeat.pdf", params=dict(toko=TOKO, platform="shopee"))
+    assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf" and pdf.content[:5] == b"%PDF-"
+    assert "attachment" in pdf.headers["content-disposition"]
+    assert c.get("/api/repeat.pdf", params=dict(toko="TokoLain")).status_code == 404
     # workspace lain tidak melihat toko ini
     assert c.get("/api/repeat", params=dict(toko="TokoLain")).status_code == 404
 
