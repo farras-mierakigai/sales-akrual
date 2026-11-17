@@ -135,6 +135,7 @@ toko = Table(
     Column("hpp_updated", String(32), nullable=False, default=""),
     Column("ads_notes", Text, nullable=False, default=""),
     Column("ads_prorate", Boolean, nullable=False, default=False),
+    Column("pricing_cfg", Text, nullable=False, default=""),   # strategi harga: channel offline (consignment/event), JSON
     UniqueConstraint("workspace_id", "name", name="uq_toko_ws_name"),
 )
 
@@ -280,6 +281,8 @@ def _migrate_schema(eng):
         cols_toko = {c["name"] for c in sa.inspect(cx).get_columns("toko")}
         if "workspace_id" not in cols_toko:
             run(cx, f"ALTER TABLE toko ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT {DEFAULT_WS}")
+        if "pricing_cfg" not in cols_toko:
+            run(cx, "ALTER TABLE toko ADD COLUMN pricing_cfg TEXT NOT NULL DEFAULT ''")
         cols_ol = {c["name"] for c in sa.inspect(cx).get_columns("order_line")}
         for col in ("buyer", "buyer_key", "province", "city", "district"):
             if col not in cols_ol:
@@ -690,6 +693,28 @@ def ads_save(name, clean):
     export_settings(name)
 
 
+def pricing_load(name):
+    """Pengaturan strategi harga toko (channel offline: consignment/event) → dict; kosong bila belum ada."""
+    with engine().connect() as cx:
+        tid = toko_id(cx, name)
+        if tid is None:
+            return {}
+        raw = cx.execute(select(toko.c.pricing_cfg).where(toko.c.id == tid)).scalar()
+    try:
+        return json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+
+
+def pricing_save(name, cfg):
+    """Simpan pengaturan strategi harga. Sengaja TIDAK menaikkan versi toko: tidak mengubah angka laporan,
+    jadi cache tab lain tidak perlu dihitung ulang."""
+    with engine().begin() as cx:
+        tid = toko_id(cx, name, create=True)
+        cx.execute(update(toko).where(toko.c.id == tid).values(pricing_cfg=json.dumps(cfg, ensure_ascii=False)))
+    export_settings(name)
+
+
 def export_settings(name):
     """Tulis hpp.json / hpp_map.json / ads.json ke folder arsip <DATA>/<toko>/ supaya arsip (yang disimpan di git)
     lengkap untuk membangun ulang database lewat migrate.py. Dipanggil tiap HPP/iklan disimpan."""
@@ -706,6 +731,9 @@ def export_settings(name):
     dump("hpp_map.json", mapping)
     if ads["channels"] or ads["months"]:
         dump("ads.json", ads)
+    pc = pricing_load(name)
+    if pc:
+        dump("pricing.json", pc)
 
 
 # ---------------------------------------------------------------- pengguna

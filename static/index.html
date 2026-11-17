@@ -100,6 +100,13 @@ th.dt-sort{cursor:pointer;user-select:none}th.dt-sort:hover{color:var(--purple-d
 .small{font-size:12px;color:var(--muted)}
 .muted{color:var(--muted)}
 .neg{color:var(--bad)}
+.hrg-chbar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.hrg-chbar button{padding:6px 12px;border-radius:999px;border:1px solid var(--line2);background:#fff;font-size:13px}
+.hrg-chbar button.on{background:var(--purple-dk);border-color:var(--purple-dk);color:#fff}
+.hrg-chbar button.add{border-style:dashed;color:var(--ink2)}
+.hrg-chbar .sep{width:1px;background:var(--line);margin:0 4px}
+.hrg-in{width:110px;font:inherit;padding:5px 8px;border:1px solid var(--line2);border-radius:6px;text-align:right}
+.hrg-tiers td,.hrg-tiers th{padding:4px 6px}
 .empty{padding:40px;text-align:center;color:var(--ink2)}
 .filelist td{white-space:normal}
 details.f{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px}
@@ -273,19 +280,23 @@ tr.tk-row{cursor:pointer}tr.tk-row:hover td{background:var(--bg2)}
     <div id="hrgEmpty" class="empty">Pilih toko lalu klik <b>Hitung</b>.</div>
     <div id="hrgBody" style="display:none">
       <div class="note" id="hrgNote"></div>
+      <div class="hrg-chbar" id="hrgChBar"></div>
       <div class="card"><h2>Asumsi</h2><div class="desc">Harga dihitung ulang langsung di browser saat asumsi diubah. <b>Laba bersih per unit</b> = harga jual − biaya marketplace − iklan − HPP. <b>Biaya marketplace</b> = 1 − neto/harga produk dari laporan penghasilan (komisi, biaya layanan/proses, afiliasi, ongkir & voucher yang ditanggung penjual, PPh), dibagi ke tiap produk menurut bruto order-nya; produk yang &lt; 30% bruto-nya sudah cair memakai rata-rata platform. <b>Iklan</b> = rata-rata % iklan per platform dari tab Iklan (bukan per produk — produk yang tidak diiklankan akan terlihat lebih rugi dari kenyataannya; ganti ke angka sendiri bila perlu).</div>
         <div class="filters" style="margin:0">
           <label>Target laba bersih (% harga) <input type="number" id="hrgTarget" value="15" min="0" max="80" step="1" style="width:110px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
-          <label>Biaya iklan <select id="hrgAdsMode"><option value="actual">% aktual per platform</option><option value="custom">angka sendiri</option><option value="none">tanpa iklan</option></select></label>
+          <label class="hrg-mp">Biaya iklan <select id="hrgAdsMode"><option value="actual">% aktual per platform</option><option value="custom">angka sendiri</option><option value="none">tanpa iklan</option></select></label>
           <label id="hrgAdsCustomL" style="display:none">Iklan (% harga) <input type="number" id="hrgAdsCustom" value="10" min="0" max="90" step="0.5" style="width:100px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
           <label>Pembulatan harga saran <select id="hrgRound"><option value="500">naik ke kelipatan 500</option><option value="1000">naik ke kelipatan 1.000</option><option value="900">akhiran …900</option><option value="1">tanpa pembulatan</option></select></label>
-          <label>Qty minimal <input type="number" id="hrgMinQty" value="10" min="0" step="1" style="width:90px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
+          <label class="hrg-mp">Qty minimal <input type="number" id="hrgMinQty" value="10" min="0" step="1" style="width:90px;font:inherit;padding:7px 10px;border:1px solid var(--line2);border-radius:6px"></label>
         </div>
       </div>
+      <div id="hrgOff" style="display:none"></div>
+      <div id="hrgMp">
       <div class="tiles" id="hrgTiles"></div>
       <div class="card"><h2>Biaya variabel per platform</h2><div class="desc">Persen dari harga jual, periode & filter di atas. Harga minimal agar tidak rugi = HPP ÷ (1 − total biaya variabel); harga target = HPP ÷ (1 − biaya variabel − target laba).</div><div class="tblwrap"><table id="tblHrgCh"></table></div></div>
       <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Harga per produk</h2><div class="desc">Satu baris = listing × item HPP × platform (varian dengan HPP berbeda dipisah). <b>Harga jual</b> = rata-rata bruto per unit setelah diskon penjual; <b>harga coret</b> = harga sebelum diskon. <b>Harga BEP</b> = harga terendah tanpa rugi; <b>harga target</b> = harga agar laba bersih = target. <b>Diskon maks</b> = diskon terbesar dari harga coret yang masih memenuhi target. Klik baris untuk simulasi harga, titik harga yang pernah dipakai, dan riwayat per bulan.</div></div><select id="hrgStatusF"><option value="">semua status</option><option value="rugi">Rugi</option><option value="tipis">Di bawah target</option><option value="sehat">Sesuai target</option><option value="promo">Ruang promo</option><option value="nohpp">Tanpa HPP</option></select></div><div class="tblwrap" style="max-height:70vh"><table id="tblHrg"></table></div></div>
       <div class="card" id="hrgDetail" style="display:none"></div>
+      </div>
     </div>
   </div>
 
@@ -1047,11 +1058,14 @@ $('#geoMonthMode').onchange=()=>{ if(GEO&&GEO.totals) renderGeoMonth(); };
 $('#btnGeoX').onclick=()=>{ if(!$('#toko').value) return toast('pilih toko dulu'); location.href='/api/geo.xlsx?'+qs({platform:$('#platform').value}); };
 
 // ---------- strategi harga (rumus di browser supaya asumsi bisa diubah tanpa hitung ulang)
-let HRG=null, HRG_SEL=null;
+let HRG=null, HRG_SEL=null, HRG_CH=null, HRG_CFG={channels:[]}, HRG_ITEMS=[], HRG_DIRTY=false;
 async function loadHarga(){
   const t=$('#toko').value; if(!t) return;
   $('#hrgEmpty').style.display='block'; $('#hrgEmpty').textContent='menghitung strategi harga…'; $('#hrgBody').style.display='none';
-  try{ HRG=await api('/api/pricing?'+qs({platform:$('#platform').value})); HRG_SEL=null; renderHarga(); }
+  try{ const [h,c]=await Promise.all([api('/api/pricing?'+qs({platform:$('#platform').value})), api('/api/pricing/cfg?toko='+encodeURIComponent(t))]);
+    HRG=h; HRG_CFG=c.cfg||{channels:[]}; HRG_ITEMS=c.items||[]; HRG_SEL=null; HRG_DIRTY=false;
+    try{ const k=localStorage.getItem('sa_hrg_ch'); if(k) HRG_CH=k; }catch(e){}
+    renderHarga(); }
   catch(e){ $('#hrgEmpty').textContent='gagal: '+e.message; }
 }
 function hrgOpt(){ return {t:Math.min(0.9,Math.max(0,+$('#hrgTarget').value||0)/100), mode:$('#hrgAdsMode').value, adsC:Math.max(0,+$('#hrgAdsCustom').value||0)/100, rnd:$('#hrgRound').value, minq:Math.max(0,+$('#hrgMinQty').value||0)}; }
@@ -1085,10 +1099,28 @@ function hrgSaran(r,x,o){
   if(cr.length) s+=' · item sama di '+cr.map(([c,p])=>`${c} ${fmtRp(p)} (${sgn(p/r.harga-1)})`).join(', ');
   return s;
 }
+function hrgMpChannels(){ return Object.entries(HRG.channels).sort((a,b)=>b[1].bruto-a[1].bruto).map(([c])=>c); }
+function renderHrgChBar(){
+  const mp=hrgMpChannels(); const off=HRG_CFG.channels||[];
+  const keys=[...mp,'all',...off.map(c=>'off:'+c.id)];
+  if(!keys.includes(HRG_CH)) HRG_CH=mp[0]||(off[0]?'off:'+off[0].id:'all');
+  const b=(k,l)=>`<button data-k="${esc(k)}" class="${HRG_CH===k?'on':''}">${l}</button>`;
+  $('#hrgChBar').innerHTML=mp.map(c=>b(c,esc(c))).join('')+b('all','Semua marketplace')+'<span class="sep"></span>'+
+    off.map(c=>b('off:'+c.id,(c.kind==='event'?'🎪 ':'🏬 ')+esc(c.name))).join('')+
+    '<button class="add" data-add="consignment">+ Consignment</button><button class="add" data-add="event">+ Event</button>';
+  $('#hrgChBar').querySelectorAll('button[data-k]').forEach(x=>x.onclick=()=>{ if(HRG_DIRTY&&!confirm('Perubahan pengaturan channel belum disimpan. Pindah tanpa menyimpan?')) return; if(HRG_DIRTY) return loadHarga().then(()=>{HRG_CH=x.dataset.k; hrgChSave(); renderHarga();}); HRG_CH=x.dataset.k; hrgChSave(); HRG_SEL=null; renderHarga(); });
+  $('#hrgChBar').querySelectorAll('button[data-add]').forEach(x=>x.onclick=()=>offAdd(x.dataset.add));
+}
+function hrgChSave(){ try{ localStorage.setItem('sa_hrg_ch',HRG_CH); }catch(e){} }
 function renderHarga(){
   const H=HRG;
-  if(!H.rows.length){ $('#hrgEmpty').style.display='block'; $('#hrgEmpty').textContent='Tidak ada order terjual untuk filter ini.'; $('#hrgBody').style.display='none'; return; }
   $('#hrgEmpty').style.display='none'; $('#hrgBody').style.display='block';
+  renderHrgChBar();
+  const isOff=HRG_CH&&HRG_CH.startsWith('off:');
+  document.querySelectorAll('#p-harga .hrg-mp').forEach(e=>e.style.display=isOff?'none':'');
+  $('#hrgMp').style.display=isOff?'none':''; $('#hrgOff').style.display=isOff?'':'none';
+  if(isOff) return renderOffline();
+  if(!H.rows.length){ $('#hrgTiles').innerHTML='<div class="empty">Tidak ada order marketplace terjual untuk filter ini.</div>'; $('#tblHrg').innerHTML=''; $('#tblHrgCh').innerHTML=''; $('#hrgNote').innerHTML=''; return; }
   $('#hrgAdsCustomL').style.display=$('#hrgAdsMode').value==='custom'?'':'none';
   const o=hrgOpt(); const labels=(H.months||[]).map(monthLabel);
   const noAds=Object.values(H.channels).every(c=>c.ads_pct==null);
@@ -1100,9 +1132,9 @@ function renderHarga(){
   // per platform
   $('#tblHrgCh').innerHTML='<tr><th class="l">Platform</th><th>Bruto</th><th>Sudah cair</th><th>Biaya marketplace</th><th>Iklan</th><th>Total biaya variabel</th><th>Sisa untuk HPP + laba</th></tr>'+Object.entries(H.channels).sort((a,b)=>b[1].bruto-a[1].bruto).map(([ch,c])=>{
     const x=hrgCosts({channel:ch,mp_pct:c.mp_pct,ads_pct:c.ads_pct},o);
-    return `<tr><td class="l">${esc(ch)}</td><td>${fmtRp(c.bruto)}</td><td>${pct(c.bruto?100*c.settled_bruto/c.bruto:0)}</td><td>${pct(x.mp*100)}</td><td>${pct(x.ad*100)}</td><td><b>${pct(x.c*100)}</b></td><td>${pct((1-x.c)*100)}</td></tr>`; }).join('');
+    return `<tr${ch===HRG_CH?' style="background:var(--bg2);font-weight:700"':''}><td class="l">${esc(ch)}</td><td>${fmtRp(c.bruto)}</td><td>${pct(c.bruto?100*c.settled_bruto/c.bruto:0)}</td><td>${pct(x.mp*100)}</td><td>${pct(x.ad*100)}</td><td><b>${pct(x.c*100)}</b></td><td>${pct((1-x.c)*100)}</td></tr>`; }).join('');
   // baris produk
-  const rows=H.rows.map((r,i)=>({r,i,x:hrgCalc(r,o)})).filter(z=>z.r.qty>=o.minq);
+  const rows=H.rows.map((r,i)=>({r,i,x:hrgCalc(r,o)})).filter(z=>z.r.qty>=o.minq&&(HRG_CH==='all'||z.r.channel===HRG_CH));
   const cnt={rugi:[0,0],tipis:[0,0],sehat:[0,0],promo:[0,0],nohpp:[0,0]}; let laba=0, upl=0, bru=0;
   for(const {r,x} of rows){ cnt[x.status][0]++; cnt[x.status][1]+=r.bruto; bru+=r.bruto;
     if(x.status!=='nohpp'){ laba+=x.laba*r.qty; if((x.status==='rugi'||x.status==='tipis')&&x.target_raw) upl+=(hrgAt(x.target_raw,r,x)-x.laba)*r.qty; } }
@@ -1163,6 +1195,132 @@ function hrgSim(){
 ['#hrgAdsMode','#hrgRound','#hrgStatusF'].forEach(s=>$(s).onchange=()=>HRG&&renderHarga());
 $('#tblHrg').onclick=e=>{ const tr=e.target.closest('tr[data-i]'); if(tr) hrgShow(+tr.dataset.i); };
 
+
+// ---------- strategi harga: channel offline (consignment / event) — tanpa data penjualan, dari master HPP + aturan fee bertingkat
+const OFF_DEF={
+  consignment:()=>({name:'Consignment',kind:'consignment',tiers:[{upto:null,fee:25}],other_pct:0,per_unit:0,fixed:0,fixed_qty:0,ref:'Shopee',notes:'',prices:{}}),
+  event:()=>({name:'Event',kind:'event',tiers:[{upto:null,fee:0}],other_pct:0,per_unit:0,fixed:0,fixed_qty:0,ref:'Shopee',notes:'',prices:{}}),
+};
+function offCur(){ return (HRG_CFG.channels||[]).find(c=>'off:'+c.id===HRG_CH); }
+async function offSave(){
+  try{ const r=await post('/api/pricing/cfg',{toko:$('#toko').value,cfg:HRG_CFG}); HRG_CFG=r.cfg; HRG_DIRTY=false; toast('pengaturan channel disimpan'); renderHarga(); }
+  catch(e){ toast('gagal menyimpan: '+e.message); }
+}
+async function offAdd(kind){
+  if(HRG_DIRTY&&!confirm('Perubahan channel ini belum disimpan. Lanjut (perubahan ikut tersimpan)?')) return;
+  const nm=prompt(kind==='event'?'Nama event (mis. Event Ramadhan JCC):':'Nama consignment (mis. Consignment Yogya):', kind==='event'?'Event':'Consignment'); if(!nm) return;
+  const c=Object.assign(OFF_DEF[kind](),{id:'c'+Date.now().toString(36),name:nm.trim()});
+  HRG_CFG.channels=[...(HRG_CFG.channels||[]),c]; HRG_CH='off:'+c.id; hrgChSave(); await offSave();
+}
+async function offDel(){ const c=offCur(); if(!c||!confirm('Hapus channel "'+c.name+'" beserta daftar harganya?')) return; HRG_CFG.channels=HRG_CFG.channels.filter(x=>x!==c); HRG_CH=null; await offSave(); }
+const offFee=(P,c)=>{ for(const t of c.tiers){ if(t.upto==null||P<=t.upto) return t.fee/100; } return 0; };
+const offUnit=c=>(+c.per_unit||0)+((+c.fixed||0)&&(+c.fixed_qty||0)?c.fixed/c.fixed_qty:0);
+const offLaba=(P,hpp,c)=>P*(1-offFee(P,c)-(+c.other_pct||0)/100)-offUnit(c)-hpp;
+function offSolve(hpp,c,t,rnd){   // harga terkecil dengan margin ≥ t, memperhitungkan tingkatan fee (t=0 → BEP)
+  const K=hpp+offUnit(c), o=(+c.other_pct||0)/100; let best=null, lo=0;
+  for(const tr of c.tiers){ const hi=tr.upto==null?Infinity:tr.upto, f=tr.fee/100+o;
+    if(f+t<1){ let P=Math.max(K/(1-f-t),lo+1); if(rnd) P=hrgRound(P,rnd);
+      if(P<=hi*1.0000001||rnd){ if(offLaba(P,hpp,c)>=t*P-0.5&&(best==null||P<best)) best=P; } }
+    lo=hi; if(lo===Infinity) break; }
+  return best;
+}
+function offZones(c){ const o=(+c.other_pct||0)/100, z=[];
+  for(let i=0;i<c.tiers.length-1;i++){ const B=c.tiers[i].upto, f1=c.tiers[i].fee/100+o, f2=c.tiers[i+1].fee/100+o;
+    if(B&&f2>f1&&f2<1) z.push({B,Z:B*(1-f1)/(1-f2),f1:c.tiers[i].fee,f2:c.tiers[i+1].fee}); }
+  return z; }
+function offRefPrices(ref){   // harga pembanding per item HPP: rata-rata harga jual di channel marketplace (berbobot qty)
+  const m={}; for(const r of HRG.rows){ if(!r.hpp_item||(ref!=='all'&&r.channel!==ref)) continue; const a=m[r.hpp_item]||(m[r.hpp_item]=[0,0]); a[0]+=r.qty; a[1]+=r.bruto; }
+  const out={}; for(const k in m) if(m[k][0]>0) out[k]=Math.round(m[k][1]/m[k][0]);
+  if(ref==='master') for(const it of HRG_ITEMS) if(it.harga_jual) out[it.name]=it.harga_jual;
+  return out; }
+function offCalc(it,c,o,ref){
+  const x={hpp:it.hpp, own:c.prices[it.name]||null, ref:ref[it.name]||null};
+  x.P=x.own||x.ref; x.bep=offSolve(it.hpp,c,0,null); x.target=offSolve(it.hpp,c,o.t,o.rnd);
+  if(!x.P){ x.status='noprice'; return x; }
+  x.fee=offFee(x.P,c); x.laba=offLaba(x.P,it.hpp,c); x.margin=x.laba/x.P;
+  x.zone=offZones(c).find(z=>x.P>z.B&&x.P<z.Z);
+  x.status=x.laba<0?'rugi':x.zone?'zona':x.margin<o.t-1e-9?'tipis':x.margin>=o.t+0.10?'promo':'sehat';
+  return x; }
+const OFF_ST=Object.assign({},HRG_ST,{zona:['warn','Zona fee naik'],noprice:['','Belum ada harga']});
+function offSaran(it,c,x,o){
+  const z=x.zone;
+  if(x.status==='noprice') return x.target?`Saran harga ${fmtRp(x.target)} (target ${pct(o.t*100)})`:'Target tidak tercapai dengan biaya ini';
+  if(z) return `Di atas ${fmtRp(z.B)} fee naik ${pct(z.f1)}→${pct(z.f2)}: bersih ${fmtRp(x.P*(1-x.fee-(+c.other_pct||0)/100))} < jual ${fmtRp(z.B)} (bersih ${fmtRp(z.B*(1-z.f1/100-(+c.other_pct||0)/100))}). Turunkan ke ${fmtRp(z.B)} atau naikkan ≥ ${fmtRp(hrgRound(z.Z,o.rnd))}`;
+  if(x.status==='rugi') return x.bep?`Naikkan minimal ke ${fmtRp(hrgRound(x.bep,o.rnd))} (BEP)`+(x.target?`; target ${fmtRp(x.target)}`:''):'Biaya ≥ 100% harga — tidak tertolong harga';
+  if(x.status==='tipis') return x.target?`Harga target ${fmtRp(x.target)} (${sgn(x.target/x.P-1)})`:'Target tidak tercapai dengan biaya ini';
+  const zs=offZones(c).filter(z=>x.P<=z.B&&x.target&&x.target<=z.B);
+  return (x.status==='promo'?`Ruang promo: bisa turun sampai ${fmtRp(x.target)}`:'Aman')+(zs.length?` · jangan naik ke ${fmtRp(zs[0].B+1)}–${fmtRp(Math.ceil(zs[0].Z)-1)} (fee ${pct(zs[0].f2)})`:'');
+}
+function renderOffline(){
+  const c=offCur(); if(!c) return;
+  const o=hrgOpt(); const mp=hrgMpChannels();
+  const ref=offRefPrices(c.ref||'Shopee'); const zones=offZones(c);
+  const tierRows=c.tiers.map((t,i)=>`<tr><td class="l">${t.upto==null?(i?'di atas '+fmtRp(c.tiers[i-1].upto):'semua harga'):`harga ≤ <input class="hrg-in" data-ti="${i}" data-f="upto" type="number" step="1000" value="${t.upto}">`}</td><td>fee <input class="hrg-in" style="width:70px" data-ti="${i}" data-f="fee" type="number" step="0.5" value="${t.fee}"> %</td><td>${t.upto==null?'':`<button class="ghost" data-tdel="${i}" style="padding:2px 8px">✕</button>`}</td></tr>`).join('');
+  const refOpts=[...mp.map(m=>[m,'harga rata-rata '+m]),['all','harga rata-rata semua marketplace'],['master','kolom Harga Jual di master HPP']];
+  $('#hrgOff').innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><h2>${c.kind==='event'?'🎪':'🏬'} Pengaturan ${esc(c.name)} ${HRG_DIRTY?'<span class="pill warn">belum disimpan</span>':''}</h2><div class="row"><button class="primary" id="offSaveB">Simpan</button><button class="ghost" id="offDelB">Hapus channel</button></div></div>
+    <div class="desc">Channel offline tidak punya data penjualan di app — harga & laba dihitung dari <b>master HPP</b> (tab HPP & Laba) dan aturan di bawah. <b>Fee bertingkat</b>: fee dipilih menurut harga jual per unit (tingkat pertama yang batasnya ≥ harga). ${c.kind==='event'?'<b>Biaya tetap event</b> (sewa booth, transport, SPG, dll.) dibagi ke estimasi qty terjual selama event.':'<b>Biaya per unit</b> untuk ongkir kirim barang ke toko titipan, hangtag, packaging, dll.'}</div>
+    <div class="grid2"><div>
+      <div class="filters" style="margin:0 0 8px"><label>Nama <input type="text" id="offName" value="${esc(c.name)}"></label><label>Jenis <select id="offKind"><option value="consignment">Consignment</option><option value="event">Event</option></select></label></div>
+      <b class="small">Fee ke mitra / penyelenggara</b>
+      <table class="hrg-tiers" style="width:auto">${tierRows}</table>
+      <button class="ghost" id="offTierAdd" style="margin-top:6px">+ tingkatan fee</button>
+    </div><div>
+      <div class="filters" style="margin:0">
+        <label>Biaya lain (% harga) <input type="number" class="hrg-in" id="offOther" step="0.5" value="${c.other_pct||0}"></label>
+        <label>Biaya per unit (Rp) <input type="number" class="hrg-in" id="offPU" step="500" value="${c.per_unit||0}"></label>
+        <label>Biaya tetap ${c.kind==='event'?'per event':'per periode'} (Rp) <input type="number" class="hrg-in" style="width:140px" id="offFix" step="100000" value="${c.fixed||0}"></label>
+        <label>Estimasi qty terjual <input type="number" class="hrg-in" id="offFixQ" step="10" value="${c.fixed_qty||0}"></label>
+        <label>Harga pembanding <select id="offRef">${refOpts.map(([k,l])=>`<option value="${esc(k)}"${(c.ref||'Shopee')===k?' selected':''}>${esc(l)}</option>`).join('')}</select></label>
+      </div>
+      <div class="small muted" style="margin-top:6px">Biaya tetap per unit: ${(+c.fixed||0)&&(+c.fixed_qty||0)?fmtRp(c.fixed/c.fixed_qty):'–'} · total biaya per unit di luar fee: ${fmtRp(offUnit(c))}</div>
+      <label class="small" style="display:block;margin-top:8px">Catatan<br><input type="text" id="offNotes" value="${esc(c.notes||'')}" style="width:100%"></label>
+    </div></div>
+    ${zones.map(z=>`<div class="note" style="border-left-color:var(--warn)"><b>Zona fee naik:</b> harga <b>${fmtRp(z.B+1)} – ${fmtRp(Math.ceil(z.Z)-1)}</b> menghasilkan uang bersih <b>lebih kecil</b> daripada menjual di ${fmtRp(z.B)} (fee ${pct(z.f1)} → ${pct(z.f2)}: ${fmtRp(z.B)} × ${pct(100-z.f1-(+c.other_pct||0))} = ${fmtRp(z.B*(1-z.f1/100-(+c.other_pct||0)/100))}). Kalau mau di atas ${fmtRp(z.B)}, langsung ke ≥ ${fmtRp(hrgRound(z.Z,o.rnd))}.</div>`).join('')}
+  </div>
+  <div class="tiles" id="offTiles"></div>
+  <div class="card"><div class="row" style="justify-content:space-between"><div><h2>Daftar harga ${esc(c.name)}</h2><div class="desc">Semua item di master HPP. Kolom <b>Harga ${esc(c.name)}</b> diisi manual (kosong = pakai harga pembanding). <b>Harga BEP/target</b> sudah memilih tingkatan fee yang paling menguntungkan. Klik <b>Simpan</b> di atas setelah mengubah harga.</div></div>
+    <div class="row"><button class="ghost" id="offFillEmpty">isi yang kosong dengan harga target</button><button class="ghost" id="offFillAll">isi semua dengan harga target</button><button class="ghost" id="offClear">kosongkan harga</button></div></div>
+    <div class="tblwrap" style="max-height:70vh"><table id="tblOff"></table></div></div>`;
+  $('#offKind').value=c.kind;
+  const dirty=(rerender)=>{ HRG_DIRTY=true; if(rerender) renderOffline(); else { offTable(); const h=$('#hrgOff h2'); if(h&&!h.querySelector('.pill')) h.insertAdjacentHTML('beforeend',' <span class="pill warn">belum disimpan</span>'); } };
+  $('#offSaveB').onclick=offSave; $('#offDelB').onclick=offDel;
+  $('#offName').onchange=e=>{ c.name=e.target.value.trim()||c.name; dirty(true); renderHrgChBar(); };
+  $('#offKind').onchange=e=>{ c.kind=e.target.value; dirty(true); renderHrgChBar(); };
+  $('#offNotes').oninput=e=>{ c.notes=e.target.value; HRG_DIRTY=true; };
+  $('#offRef').onchange=e=>{ c.ref=e.target.value; dirty(true); };
+  [['#offOther','other_pct'],['#offPU','per_unit'],['#offFix','fixed'],['#offFixQ','fixed_qty']].forEach(([id,f])=>$(id).onchange=e=>{ c[f]=Math.max(0,+e.target.value||0); dirty(true); });
+  $('#hrgOff').querySelectorAll('input[data-ti]').forEach(inp=>inp.onchange=()=>{ const t=c.tiers[+inp.dataset.ti]; t[inp.dataset.f]=Math.max(0,+inp.value||0)||(inp.dataset.f==='fee'?0:t.upto);
+    c.tiers.sort((a,b)=>(a.upto==null)-(b.upto==null)||(a.upto||0)-(b.upto||0)); dirty(true); });
+  $('#hrgOff').querySelectorAll('button[data-tdel]').forEach(b=>b.onclick=()=>{ c.tiers.splice(+b.dataset.tdel,1); dirty(true); });
+  $('#offTierAdd').onclick=()=>{ const last=c.tiers.filter(t=>t.upto!=null).pop(); const up=prompt('Batas harga tingkatan baru (Rp, harga ≤ batas ini):', last?last.upto*2:100000); if(!up||!(+up>0)) return; const fin=c.tiers[c.tiers.length-1];
+    c.tiers.splice(c.tiers.length-1,0,{upto:+up,fee:fin.fee}); c.tiers.sort((a,b)=>(a.upto==null)-(b.upto==null)||(a.upto||0)-(b.upto||0)); dirty(true); };
+  const fill=(all)=>{ for(const it of HRG_ITEMS){ if(!all&&c.prices[it.name]) continue; const t=offSolve(it.hpp,c,o.t,o.rnd); if(t) c.prices[it.name]=t; } dirty(true); };
+  $('#offFillEmpty').onclick=()=>fill(false); $('#offFillAll').onclick=()=>{ if(confirm('Ganti SEMUA harga '+c.name+' dengan harga target?')) fill(true); };
+  $('#offClear').onclick=()=>{ if(confirm('Kosongkan semua harga '+c.name+'?')){ c.prices={}; dirty(true); } };
+  offTable();
+}
+function offTable(){
+  const c=offCur(); if(!c) return; const o=hrgOpt(); const ref=offRefPrices(c.ref||'Shopee');
+  const rows=HRG_ITEMS.map(it=>({it,x:offCalc(it,c,o,ref)}));
+  const cnt={}; let lab=0, n=0; for(const {x} of rows){ cnt[x.status]=(cnt[x.status]||0)+1; if(x.P){ lab+=x.margin; n++; } }
+  $('#offTiles').innerHTML=[
+    ['Item di master HPP', fmt(rows.length), fmt(Object.keys(c.prices).length)+' punya harga '+c.name+' sendiri'],
+    ['Rata-rata margin', n?pct(100*lab/n):'–', 'laba bersih per unit ÷ harga, '+fmt(n)+' item berharga'],
+    ['Rugi', fmt(cnt.rugi||0)+' item', 'harga < BEP'],
+    ['Zona fee naik', fmt(cnt.zona||0)+' item', 'harga di rentang yang bersihnya lebih kecil dari batas tingkatan'],
+    ['Di bawah target '+pct(o.t*100), fmt(cnt.tipis||0)+' item', fmt((cnt.sehat||0)+(cnt.promo||0))+' item sesuai target'],
+  ].map(t=>`<div class="tile"><div class="k">${t[0]}</div><div class="v">${t[1]}</div><div class="s">${t[2]}</div></div>`).join('');
+  const calc=(it,x)=>{ const st=OFF_ST[x.status], np=x.status==='noprice';
+    return `<td class="c">${np?'–':pct(x.fee*100)}</td><td class="c ${!np&&x.laba<0?'neg':''}">${np?'–':fmt(x.laba)}</td><td class="c ${!np&&x.laba<0?'neg':''}"><b>${np?'–':pct(x.margin*100)}</b></td><td class="c">${x.bep?fmt(x.bep):'–'}</td><td class="c"><b>${x.target?fmt(x.target):'–'}</b></td><td class="l c"><span class="pill ${st[0]}">${st[1]}</span></td><td class="l small c" style="min-width:300px;white-space:normal">${esc(offSaran(it,c,x,o))}</td>`; };
+  $('#tblOff').innerHTML='<tr><th class="l">Item HPP</th><th>HPP</th><th>Harga pembanding</th><th>Harga '+esc(c.name)+'</th><th>Fee</th><th>Laba/unit</th><th>Margin</th><th>Harga BEP</th><th>Harga target</th><th class="l">Status</th><th class="l">Saran</th></tr>'+
+    (rows.length?rows.map(({it,x},i)=>`<tr data-oi="${i}"><td class="l" style="min-width:200px"><b>${esc(it.name)}</b>${it.kode?`<div class="small muted">${esc(it.kode)}</div>`:''}</td><td>${fmt(it.hpp)}</td><td>${x.ref?fmt(x.ref):'–'}</td><td><input class="hrg-in" type="number" step="500" data-oi="${i}" value="${x.own||''}" placeholder="${x.ref?fmt(x.ref):''}"></td>${calc(it,x)}</tr>`).join('')
+     :'<tr><td class="muted" colspan="11">Master HPP toko ini masih kosong — isi di tab HPP & Laba.</td></tr>');
+  $('#tblOff').querySelectorAll('input[data-oi]').forEach(inp=>inp.oninput=()=>{ const it=rows[+inp.dataset.oi].it; const v=Math.round(+inp.value||0);
+    if(v>0) c.prices[it.name]=v; else delete c.prices[it.name]; HRG_DIRTY=true;
+    const tr=inp.closest('tr'); tr.querySelectorAll('td.c').forEach(td=>td.remove()); tr.insertAdjacentHTML('beforeend',calc(it,offCalc(it,c,hrgOpt(),ref)));
+    const h=$('#hrgOff h2'); if(h&&!h.querySelector('.pill')) h.insertAdjacentHTML('beforeend',' <span class="pill warn">belum disimpan</span>'); });
+  dt('tblOff',{size:50});
+}
 function renderDetail(){
   const B=DATA.breakdown;
   $('#tblStatus').innerHTML='<tr><th class="l">Status</th><th>Order</th><th>Nilai</th></tr>'+B.status.map(s=>`<tr><td class="l">${s.status}</td><td>${fmt(s.order)}</td><td>${fmt(s.nilai)}</td></tr>`).join('');

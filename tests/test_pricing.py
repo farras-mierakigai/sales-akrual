@@ -64,6 +64,18 @@ def test_pricing_filters():
     assert analysis.pricing(O.iloc[:0], I, ads)["rows"] == []
 
 
+def test_clean_cfg():
+    import app as appmod
+    c = appmod.clean_pricing_cfg({"channels": [{"name": " Consignment Yogya ", "kind": "x", "tiers": [{"upto": None, "fee": 30}, {"upto": "100000", "fee": 23}],
+                                                "prices": {"Runa": "95000", "Kosong": 0}, "per_unit": -5}]})
+    ch = c["channels"][0]
+    assert ch["name"] == "Consignment Yogya" and ch["kind"] == "consignment"
+    assert ch["tiers"] == [dict(upto=100000.0, fee=23.0), dict(upto=None, fee=30.0)]    # diurutkan, tingkat terakhir tanpa batas
+    assert ch["prices"] == {"Runa": 95000} and ch["per_unit"] == 0
+    c = appmod.clean_pricing_cfg({"channels": [{"name": "E", "kind": "event", "tiers": [{"upto": 50000, "fee": 10}]}]})
+    assert c["channels"][0]["tiers"][-1] == dict(upto=None, fee=10.0)
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

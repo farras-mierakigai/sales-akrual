@@ -961,6 +961,65 @@ def api_pricing(toko: str, platform: str = "all", m_from: Optional[str] = None, 
     return cached("pricing", toko, dict(platform=platform, m_from=m_from, m_to=m_to, d_from=d_from, d_to=d_to), compute)
 
 
+PRICING_KINDS = ("consignment", "event")
+
+
+def _num(v, lo=0.0, hi=1e12):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(hi, max(lo, x)) if math.isfinite(x) else 0.0
+
+
+def clean_pricing_cfg(cfg):
+    """Validasi pengaturan channel offline: tingkatan fee (harga ≤ batas → fee %), biaya lain, harga per item."""
+    out = []
+    for c in (cfg or {}).get("channels", [])[:20]:
+        tiers = []
+        for t in (c.get("tiers") or [])[:10]:
+            upto = t.get("upto")
+            upto = None if upto in (None, "", 0) else _num(upto, 1)
+            tiers.append(dict(upto=upto, fee=_num(t.get("fee"), 0, 95)))
+        tiers.sort(key=lambda t: (t["upto"] is None, t["upto"] or 0))
+        tiers = [t for i, t in enumerate(tiers) if t["upto"] is not None or i == len(tiers) - 1]
+        if not tiers or tiers[-1]["upto"] is not None:
+            tiers.append(dict(upto=None, fee=tiers[-1]["fee"] if tiers else 0.0))
+        prices = {str(k)[:200]: round(_num(v, 0)) for k, v in (c.get("prices") or {}).items() if _num(v, 0) > 0}
+        out.append(dict(
+            id=str(c.get("id") or "")[:40] or f"c{len(out) + 1}", name=(str(c.get("name") or "").strip()[:80] or "Channel offline"),
+            kind=c.get("kind") if c.get("kind") in PRICING_KINDS else "consignment",
+            tiers=tiers, other_pct=_num(c.get("other_pct"), 0, 95), per_unit=round(_num(c.get("per_unit"), 0)),
+            fixed=round(_num(c.get("fixed"), 0)), fixed_qty=round(_num(c.get("fixed_qty"), 0, 1e7)),
+            ref=str(c.get("ref") or "Shopee")[:40], notes=str(c.get("notes") or "")[:500], prices=prices))
+    return dict(channels=out)
+
+
+@app.get("/api/pricing/cfg")
+def api_pricing_cfg(toko: str):
+    if toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{toko}' tidak ada")
+    master, _ = hppmod.load(toko)
+    col = master.get("col") or "hpp"
+    items = [dict(name=i["name"], kode=i.get("kode") or "", hpp=(i.get(col) or i.get("hpp")), harga_jual=i.get("harga_jual"))
+             for i in master.get("items", []) if (i.get(col) or i.get("hpp"))]
+    return clean(dict(cfg=db.pricing_load(toko) or dict(channels=[]), items=items))
+
+
+class PricingCfgIn(BaseModel):
+    toko: str
+    cfg: dict
+
+
+@app.post("/api/pricing/cfg")
+def api_pricing_cfg_save(body: PricingCfgIn):
+    if body.toko not in analysis.list_toko():
+        raise HTTPException(404, f"toko '{body.toko}' tidak ada")
+    cfg = clean_pricing_cfg(body.cfg)
+    db.pricing_save(body.toko, cfg)
+    return clean(dict(ok=True, cfg=cfg))
+
+
 @app.get("/api/export.xlsx")
 def api_export(toko: str, m_from: Optional[str] = None, m_to: Optional[str] = None, d_from: Optional[str] = None, d_to: Optional[str] = None):
     O, I, A, files, raw = get_data(toko)

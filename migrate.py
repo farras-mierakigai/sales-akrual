@@ -68,6 +68,11 @@ def migrate_toko(name, reparse=True):
         with open(pa) as fh:
             adsmod.save(name, json.load(fh))
         print("  Iklan: ads.json dimuat")
+    pp = os.path.join(d, "pricing.json")
+    if os.path.exists(pp):
+        with open(pp) as fh:
+            db.pricing_save(name, json.load(fh))
+        print("  Strategi harga: pricing.json dimuat")
     return n_ok, n_bad
 
 
